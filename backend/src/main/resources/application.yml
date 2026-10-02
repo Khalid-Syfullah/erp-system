@@ -1,0 +1,109 @@
+# Base configuration shared by every profile. Environment variables (ERP_*) override defaults;
+# secrets have NO defaults here. Startup fails fast with the list of missing variables
+# (RequiredConfigurationValidator). Profiles: local | test | prod (+ migrate).
+spring:
+  application:
+    name: erp-backend
+  main:
+    banner-mode: off
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    url: ${ERP_DB_URL:}
+    username: ${ERP_DB_APP_USER:erp_app}
+    password: ${ERP_DB_APP_PASSWORD:}
+    hikari:
+      pool-name: erp-app
+      maximum-pool-size: ${ERP_DB_POOL_SIZE:10}
+      minimum-idle: ${ERP_DB_POOL_MIN_IDLE:2}
+      connection-timeout: 5000 # ms
+      validation-timeout: 3000 # ms
+      max-lifetime: 1800000 # ms (30 min)
+      # Fail at startup when the database is unreachable instead of serving errors later.
+      initialization-fail-timeout: 30000 # ms
+      data-source-properties:
+        ApplicationName: erp-backend
+        tcpKeepAlive: true
+        # Server-side guards (ARCHITECTURE.md §6.2): runaway statements, lock waits, idle transactions.
+        options: "-c statement_timeout=${ERP_DB_STATEMENT_TIMEOUT:30s} -c lock_timeout=${ERP_DB_LOCK_TIMEOUT:5s} -c idle_in_transaction_session_timeout=60s"
+  flyway:
+    enabled: ${ERP_DB_MIGRATE_ON_STARTUP:false}
+    url: ${spring.datasource.url}
+    user: ${ERP_DB_MIGRATOR_USER:erp_migrator}
+    password: ${ERP_DB_MIGRATOR_PASSWORD:}
+    # Objects are created as erp_owner, never as the login role (DATABASE.md §2.7).
+    init-sqls: SET ROLE erp_owner
+    schemas: platform
+    default-schema: platform
+    table: flyway_schema_history
+    locations: classpath:db/migration
+    placeholder-replacement: false
+    validate-migration-naming: true
+    clean-disabled: true
+    connect-retries: 10
+  jooq:
+    sql-dialect: postgres
+  mvc:
+    problemdetails:
+      enabled: false
+  web:
+    locale: en
+    locale-resolver: fixed
+    resources:
+      add-mappings: false
+
+server:
+  port: ${ERP_HTTP_PORT:8080}
+  shutdown: graceful
+  max-http-request-header-size: 16KB
+  error:
+    include-stacktrace: never
+    include-message: never
+    include-binding-errors: never
+    include-exception: false
+    whitelabel:
+      enabled: false
+
+management:
+  server:
+    port: ${ERP_MANAGEMENT_PORT:8081}
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+      show-components: never
+      group:
+        readiness:
+          include: readinessState,db
+        liveness:
+          include: livenessState
+  info:
+    env:
+      enabled: false
+
+logging:
+  structured:
+    format:
+      console: ecs
+    json:
+      customizer: com.erp.platform.logging.RedactingJsonMembersCustomizer
+    ecs:
+      service:
+        name: erp-backend
+  level:
+    root: INFO
+    # 404s are already in the access log; avoid one WARN per probe of an unknown path.
+    org.springframework.web.servlet.PageNotFound: ERROR
+
+erp:
+  api:
+    cursor-signing-key: ${ERP_API_CURSOR_SIGNING_KEY:}
+    max-request-body-size: 1MB
+  security:
+    csrf-cookie-secure: true

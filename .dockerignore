@@ -1,0 +1,4 @@
+# The backend image is assembled from the jar produced by `./gradlew bootJar`
+# (jOOQ code generation needs Docker, so the jar is built outside `docker build`).
+*
+!backend/build/libs/erp-backend.jar

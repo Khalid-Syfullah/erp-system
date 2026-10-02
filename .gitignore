@@ -1,0 +1,20 @@
+# Build output
+backend/build/
+backend/.gradle/
+backend/bin/
+backend/out/
+.kotlin/
+
+# IDE / OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Local environment and secrets (never commit real values)
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log

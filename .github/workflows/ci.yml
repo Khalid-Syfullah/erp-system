@@ -1,0 +1,98 @@
+# Continuous integration (DEVELOPMENT_PLAN.md §3, SECURITY.md §11).
+# Third-party actions are pinned to commit SHAs (tag in the trailing comment); update them deliberately.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (lint, type check, test, build, image scan)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      # Validates the Gradle wrapper checksum and caches dependencies.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+
+      # Dependencies are resolved against the committed lockfiles (gradle.lockfile).
+      - name: Install dependencies
+        run: ./gradlew --no-daemon dependencies --configuration testRuntimeClasspath > /dev/null
+
+      - name: Lint (formatting)
+        run: ./gradlew --no-daemon spotlessCheck
+
+      # Compiles with -Xlint:all -Werror. jOOQ code generation runs first (needs Docker,
+      # available on GitHub-hosted Ubuntu runners).
+      - name: Type check (compile)
+        run: ./gradlew --no-daemon compileJava compileTestJava
+
+      # Unit, integration (Testcontainers PostgreSQL 18), architecture and module tests.
+      - name: Test
+        run: ./gradlew --no-daemon test
+
+      - name: Build
+        run: ./gradlew --no-daemon bootJar
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-reports
+          path: backend/build/reports/tests/
+          retention-days: 7
+
+      - name: Upload module documentation
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: spring-modulith-docs
+          path: backend/build/spring-modulith-docs/
+          retention-days: 30
+
+      - name: Build container image
+        working-directory: .
+        run: docker build --file infra/docker/backend.Dockerfile --tag erp-backend:${{ github.sha }} .
+
+      - name: Scan container image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: erp-backend:${{ github.sha }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out (full history)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks
+        run: >
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.30.1
+          git /repo --redact --no-banner --exit-code 1

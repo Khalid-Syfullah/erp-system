@@ -1,0 +1,15 @@
+# Integration tests: datasource and migrator credentials are injected by com.erp.support.TestDatabase.
+spring:
+  flyway:
+    enabled: true
+  datasource:
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 1
+
+logging:
+  pattern:
+    level: "%5p [%X{request_id:-}]"
+  level:
+    org.testcontainers: WARN
+    com.erp.access: WARN

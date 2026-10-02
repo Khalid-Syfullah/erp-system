@@ -1,0 +1,9 @@
+# Production. Every secret comes from the environment / secret manager. Migrations run as a
+# separate step (profile "migrate"), never on API startup (ARCHITECTURE.md §8.2).
+spring:
+  flyway:
+    enabled: false
+
+server:
+  # TLS terminates at the load balancer; trust its X-Forwarded-* headers.
+  forward-headers-strategy: native

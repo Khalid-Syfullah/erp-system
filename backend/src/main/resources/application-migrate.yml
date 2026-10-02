@@ -1,0 +1,14 @@
+# One-shot migration job: `SPRING_PROFILES_ACTIVE=prod,migrate`. Connects as the migrator role,
+# applies Flyway migrations and exits; no HTTP server is started.
+spring:
+  main:
+    web-application-type: none
+  datasource:
+    username: ${ERP_DB_MIGRATOR_USER:erp_migrator}
+    password: ${ERP_DB_MIGRATOR_PASSWORD:}
+    hikari:
+      pool-name: erp-migrate
+      maximum-pool-size: 2
+      minimum-idle: 0
+  flyway:
+    enabled: true

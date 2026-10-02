@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Logging (ARCHITECTURE.md §6.8). Console only (twelve-factor).
+  - Profiles "local" and "test": human-readable pattern; messages redacted by RedactingMessageConverter
+    (it replaces the %m / %msg / %message conversion words).
+  - Every other profile (staging, prod, ...): structured JSON in the format named by
+    logging.structured.format.console (ECS); string values redacted by RedactingJsonMembersCustomizer.
+-->
+<configuration>
+  <conversionRule conversionWord="m" class="com.erp.platform.logging.RedactingMessageConverter"/>
+  <conversionRule conversionWord="msg" class="com.erp.platform.logging.RedactingMessageConverter"/>
+  <conversionRule conversionWord="message" class="com.erp.platform.logging.RedactingMessageConverter"/>
+
+  <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+  <springProfile name="local | test">
+    <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+  </springProfile>
+  <springProfile name="!(local | test)">
+    <include resource="org/springframework/boot/logging/logback/structured-console-appender.xml"/>
+  </springProfile>
+
+  <root level="INFO">
+    <appender-ref ref="CONSOLE"/>
+  </root>
+</configuration>

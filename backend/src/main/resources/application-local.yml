@@ -1,0 +1,20 @@
+# Local development (`./gradlew bootRun`). Reads the repository's .env so that the backend and
+# docker compose share one set of local credentials. Never use this profile outside a workstation.
+spring:
+  config:
+    import:
+      - optional:file:../.env[.properties]
+      - optional:file:.env[.properties]
+  datasource:
+    url: ${ERP_DB_URL:jdbc:postgresql://localhost:5432/erp}
+  flyway:
+    enabled: ${ERP_DB_MIGRATE_ON_STARTUP:true}
+
+logging:
+  # Human-readable console output locally (logback-spring.xml); still redacted.
+  pattern:
+    level: "%5p [%X{request_id:-}]"
+
+erp:
+  security:
+    csrf-cookie-secure: false
