@@ -22,6 +22,17 @@ public interface PartnersFacade {
 
     Optional<SupplierInfo> supplier(UUID supplierId);
 
+    /** The customer, with its partner row locked {@code FOR SHARE}; empty without a customer profile. */
+    Optional<CustomerInfo> customerForUse(UUID customerId);
+
+    Optional<CustomerInfo> customer(UUID customerId);
+
+    /** The partner's default address of the type ({@code BILLING}, {@code SHIPPING}, {@code OTHER}). */
+    Optional<AddressInfo> defaultAddress(UUID partnerId, String addressType);
+
+    /** Whether the group is an active customer group of the company (price lists, SAL-1). */
+    boolean customerGroupUsable(UUID groupId);
+
     /** Code and name of partners by ID (unknown IDs are skipped), for display. */
     Map<UUID, PartnerSummary> partners(Collection<UUID> partnerIds);
 
@@ -46,4 +57,33 @@ public interface PartnersFacade {
             return "ACTIVE".equals(status);
         }
     }
+
+    /** A partner with its customer profile; {@code creditLimit} in base currency, {@code null}: none. */
+    record CustomerInfo(
+            UUID partnerId,
+            String code,
+            String name,
+            @Nullable String legalName,
+            String status,
+            @Nullable String taxRegistrationNo,
+            @Nullable UUID customerGroupId,
+            String currencyCode,
+            @Nullable UUID paymentTermsId,
+            @Nullable UUID defaultTaxCodeId,
+            java.math.@Nullable BigDecimal creditLimit,
+            boolean onHold) {
+
+        public boolean usable() {
+            return "ACTIVE".equals(status);
+        }
+    }
+
+    record AddressInfo(
+            String addressType,
+            String line1,
+            @Nullable String line2,
+            @Nullable String city,
+            @Nullable String region,
+            @Nullable String postalCode,
+            String countryCode) {}
 }

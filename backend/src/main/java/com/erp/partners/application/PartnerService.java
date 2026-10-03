@@ -2,6 +2,7 @@ package com.erp.partners.application;
 
 import com.erp.org.api.OrgFacade;
 import com.erp.partners.domain.PartnerStatus;
+import com.erp.partners.persistence.CustomerRepository;
 import com.erp.partners.persistence.PartnerRepository;
 import com.erp.partners.persistence.SupplierRepository;
 import com.erp.platform.audit.AuditEvent;
@@ -38,10 +39,17 @@ public class PartnerService {
 
     private final PartnerRepository partners;
     private final SupplierRepository suppliers;
+    private final CustomerRepository customers;
     private final OrgFacade org;
     private final AuditPort audit;
 
-    PartnerService(PartnerRepository partners, SupplierRepository suppliers, OrgFacade org, AuditPort audit) {
+    PartnerService(
+            PartnerRepository partners,
+            SupplierRepository suppliers,
+            CustomerRepository customers,
+            OrgFacade org,
+            AuditPort audit) {
+        this.customers = customers;
         this.partners = partners;
         this.suppliers = suppliers;
         this.org = org;
@@ -61,7 +69,8 @@ public class PartnerService {
                 partner,
                 partners.addresses(companyId, id),
                 partners.contacts(companyId, id),
-                suppliers.find(companyId, id).orElse(null));
+                suppliers.find(companyId, id).orElse(null),
+                customers.find(companyId, id).orElse(null));
     }
 
     @Transactional

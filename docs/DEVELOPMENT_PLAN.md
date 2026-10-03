@@ -33,7 +33,7 @@ flowchart LR
 | 4 | Organization management (incl. HR organizational slice) | 3 | M (done) |
 | 5 | Inventory | 4 | XL (done) |
 | 6 | Procurement (incl. Partners) | 5 | L (done) |
-| 7 | Sales | 5, 6 (patterns) | L |
+| 7 | Sales | 5, 6 (patterns) | L (done) |
 | 8 | Accounting | 4–7 (events) | XL |
 | 9 | HR and Payroll | 3, 4, 8 | L |
 | 10 | Reporting and analytics | 5–9 | M |
@@ -505,31 +505,60 @@ A phase is done only when **all** of the following hold:
 | Procurement reporting views | Phase 10 | Reporting |
 | Per-company SoD switch (G-17) | Phase 12 | Small-team deployments |
 
-### Phase 7 — Sales
+### Phase 7 — Sales ✅
 
 **Prerequisites:** Phase 5. Phase 6 patterns are reused.
 
-**Deliverables:**
+**Scope** (ADR-037): the Sales brief (customers, quotations, orders, fulfilment, invoices, returns) on the documented workflow, the Partners customer side, and the events Accounting books from. Customer payments are Accounting documents and come with Phase 8; the document rendering and notification infrastructure was deferred (both decided by the user for this phase).
 
-- Carried over from Phase 6 (ADR-036): customer profiles in Partners; the document rendering and notification pipeline (invoice and PO PDFs, emails, the bank-detail change notification) with the Event Publication Registry, `processed_events` and the `org.company.created` seeding pipeline; S3 files with MinIO; the CSV import framework (partners, opening stock).
-- Sales settings.
-- Price lists and the pricing engine (SAL-1), with a `POST /pricing/quote` endpoint.
-- Quotations (with an expiry job).
-- **Sales orders:**
-  - confirmation with the credit check through `CustomerCreditExposurePort` (default zero exposure until Phase 8)
-  - reservation through Inventory
-  - backorders
-  - cancel and close with reservation release
-- Deliveries (issue consuming reservations, recording unit cost).
-- Sales returns (back at the original cost).
-- **Invoices and credit notes:** from orders or deliveries per invoice policy, direct invoices for services, gapless numbering, snapshots, PDF, email sending (async).
-- Publish `sales.invoice.posted` / `credit_note.posted` / `order.confirmed` / `order.cancelled`, with contract tests.
-- Reporting views.
+**Delivered:**
 
-**Exit criteria:**
+1. **Partners (customer side):** customer profiles (currency, terms, default sales tax code, credit limit in base currency, on hold, customer group by typed FK), `PUT …/customer-profile`, `GET {c}/customers`; `PartnersFacade.customerForUse` (partner `FOR SHARE`), `customer`, `defaultAddress`, `customerGroupUsable`.
+2. **Sales settings:** default invoice policy, credit check mode, quotation validity, reservation on confirm, discount approval threshold.
+3. **Price lists and pricing (SAL-1):**
+   - lists per currency (one default), optionally for a customer group, with validity; quantity tiers per variant and unit
+   - selection: explicit list → customer group list → currency default; tier by minimum quantity, in the line's unit or the base unit
+   - `override_price` for prices off the list, `discount_high` above the threshold, `PRICE_MISSING` without any price; approved lines carried over unchanged need no new approval
+   - `POST {c}/pricing/quote`
+4. **Quotations:** create, edit, send (numbered), accept (creates a draft order with the quoted prices), reject, cancel; the daily expiry job `sales-quotation-expiry`.
+5. **Sales orders:**
+   - server pricing and taxes, defaults from the customer, address snapshots
+   - confirmation: numbered, credit check (open receivables through `CustomerCreditExposurePort` + uninvoiced confirmed orders; WARN/BLOCK; hold), override with reason, serialized per customer by an advisory lock; event `sales.order.confirmed`
+   - reservation of stockable lines through Inventory (partial, backorder shown), `reserve` retry
+   - cancel (nothing delivered or invoiced; releases reservations, cancels drafts; event `sales.order.cancelled`) and close (releases the rest)
+   - delivery and invoicing progress, auto-close when delivered and invoiced
+6. **Deliveries:** drafts from the order's stockable lines (all open by default); posting through `InventoryFacade.issue` consuming the reservation, under the order lock, recording unit cost and value (SAL-4).
+7. **Sales returns:** from posted deliveries, received through `returnFromCustomer` at the delivery's unit cost (SAL-7).
+8. **Invoices and credit notes:**
+   - invoices of order lines per invoice policy (SAL-5), `from-order` (optionally per delivery), direct invoices of services (`create_direct`)
+   - credit notes per invoice line, optionally for a received return (gives the order line its invoiceable quantity back), never above the invoiced quantity or price (SAL-6)
+   - base amounts per line and a tax summary, billing address and tax registration snapshots, due dates from the terms, gapless numbering at posting
+   - events `sales.invoice.posted` / `sales.credit_note.posted`; settlement through `InvoiceSettlementPort` (`UNKNOWN` until Phase 8)
+9. **Database:** RLS and composite company FKs on all new tables; triggers that freeze documents leaving DRAFT (DATABASE.md §8.5); CHECKs on every counter; typed group FKs; unique stock movement per document.
+10. **Security:** every endpoint on the catalogued `sales.*` / `partners.*` permissions; branch scope for quotations, orders, deliveries and returns; `Idempotency-Key` on confirm, quotation accept (optional) and all postings; every mutation and transition audited.
+11. **Tests:** 693 in 87 classes. New in this phase:
+    - the order-to-cash flow (quotation → order → delivery → invoice → return → credit note), partial deliveries with backorders, the ORDERED policy
+    - the order, quotation (with the expiry job), price list, delivery/return, invoice/credit note and customer suites
+    - `SalesConcurrencyIntegrationTest`: concurrent deliveries of one order, double posting, two invoices of one order, two credit notes of one invoice, concurrent confirmations against the credit limit and the stock, double acceptance
+    - unit tests for the state machines, the credit check and price tiers; event contract snapshots
 
-- The full O2C flow works through the API, including partial deliveries, returns and credit notes.
-- Over-delivery, over-invoicing and over-crediting are prevented under concurrency.
+    Coverage: sales.application 92%, sales.domain 99%, sales.persistence 96%, sales.web 100%, partners.application 97%.
+
+**Exit criteria (met):**
+
+- The full O2C flow works through the API, including partial deliveries, returns and credit notes (`OrderToCashIntegrationTest`).
+- Over-delivery, over-invoicing and over-crediting are prevented under concurrency (`SalesConcurrencyIntegrationTest`).
+
+**Moved to later phases** (ADR-037):
+
+| Item (planned for Phase 7) | Moved to | First consumer |
+|---|---|---|
+| Customer payments, allocations, AR open items, the two port implementations | Phase 8 | Accounting (as specified) |
+| Document rendering and notification pipeline: invoice, quotation and PO PDFs, e-mail sending (`…/pdf`, `…/send`), the bank-detail change notification | Phase 8 | Financial report exports and invoice e-mails |
+| Event Publication Registry, `processed_events`, the `org.company.created` seeding pipeline | Phase 8 | CoA template seeding (the first asynchronous listener) |
+| S3 file port with MinIO; CSV import framework with partner and opening-stock import | Phase 8 | Report exports, imports |
+| Sales reporting views | Phase 10 | Reporting |
+| Automatic draft credit notes on return receipt (optional in PRODUCT_SPEC.md §9.2) | Later | — |
 
 ### Phase 8 — Accounting
 
@@ -537,6 +566,7 @@ A phase is done only when **all** of the following hold:
 
 **Deliverables:**
 
+- Carried over from Phase 7 (ADR-037): the Event Publication Registry with `processed_events` and the `org.company.created` seeding pipeline; the document rendering and notification pipeline (invoice, quotation and PO PDFs, e-mail sending, the bank-detail change notification); S3 files with MinIO; the CSV import framework (partners, opening stock).
 - Accounting settings, the CoA (template `STANDARD_SME` seeding through the company-created pipeline, plus a backfill job for existing companies), account mappings with resolution precedence, fiscal years and periods, and journals.
 - **Posting engine:**
   - `PostingService` with all the database guards (DATABASE.md §8.1)
@@ -548,7 +578,7 @@ A phase is done only when **all** of the following hold:
 - **Synchronous listeners** for every posting event in the PRODUCT_SPEC.md §8.6 matrix: inventory movements, supplier bills and debit notes, invoices and credit notes. Payroll events are added in Phase 9.
 - **Integration tests** for every Phase 5–7 flow, now asserting the exact GL entries. They also cover rollback: a missing mapping or a closed period rolls back the operational document.
 - AR/AP open items and the ports implemented for Sales and Procurement (credit exposure, settlement).
-- Payments (post, void), allocations and netting, realized FX, and on-account remainders.
+- Payments (post, void) — customer receipts and supplier payments, the last step of the O2C and P2P flows — allocations and netting, realized FX, and on-account remainders.
 - Bank accounts.
 - Expenses.
 - Bank reconciliation marks.

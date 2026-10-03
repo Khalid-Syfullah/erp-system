@@ -17,6 +17,7 @@ import com.erp.platform.web.ApiException;
 import com.erp.platform.web.EntityTags;
 import com.erp.platform.web.FieldViolation;
 import com.erp.platform.web.MergePatch;
+import com.erp.platform.web.MergePatchLines;
 import com.erp.platform.web.PlatformErrorCode;
 import com.erp.platform.web.paging.ListQuery;
 import com.erp.platform.web.paging.PageResponse;
@@ -64,18 +65,18 @@ public class SupplierBillService {
 
     static final Set<String> PATCHABLE = Set.of(
             "supplierInvoiceNumber", "billDate", "accountingDate", "dueDate", "pricesIncludeTax", "notes", "lines");
-    static final List<LinePatchReader.Member> LINE_MEMBERS = List.of(
-            LinePatchReader.Member.uuid("goodsReceiptLineId", false),
-            LinePatchReader.Member.uuid("purchaseOrderLineId", false),
-            LinePatchReader.Member.uuid("variantId", false),
-            LinePatchReader.Member.text("description", 300),
-            LinePatchReader.Member.decimal("quantity", true),
-            LinePatchReader.Member.uuid("uomId", false),
-            LinePatchReader.Member.decimal("unitPrice", true),
-            LinePatchReader.Member.decimal("discountPercent", false),
-            LinePatchReader.Member.uuid("taxCodeId", false),
-            LinePatchReader.Member.uuid("branchId", false),
-            LinePatchReader.Member.uuid("departmentId", false));
+    static final List<MergePatchLines.Member> LINE_MEMBERS = List.of(
+            MergePatchLines.Member.uuid("goodsReceiptLineId", false),
+            MergePatchLines.Member.uuid("purchaseOrderLineId", false),
+            MergePatchLines.Member.uuid("variantId", false),
+            MergePatchLines.Member.text("description", 300),
+            MergePatchLines.Member.decimal("quantity", true),
+            MergePatchLines.Member.uuid("uomId", false),
+            MergePatchLines.Member.decimal("unitPrice", true),
+            MergePatchLines.Member.decimal("discountPercent", false),
+            MergePatchLines.Member.uuid("taxCodeId", false),
+            MergePatchLines.Member.uuid("branchId", false),
+            MergePatchLines.Member.uuid("departmentId", false));
     private static final int PRICE_SCALE = 10;
 
     private final BillRepository bills;
@@ -1106,7 +1107,7 @@ public class SupplierBillService {
     }
 
     static List<ProcurementCommands.BillLine> readLines(JsonNode array) {
-        return LinePatchReader.read(array, LINE_MEMBERS).stream()
+        return MergePatchLines.read(array, LINE_MEMBERS).stream()
                 .map(v -> new ProcurementCommands.BillLine(
                         v.uuid("goodsReceiptLineId"),
                         v.uuid("purchaseOrderLineId"),

@@ -53,4 +53,12 @@ public final class PartnerCommands {
             @Nullable Integer leadTimeDays) {}
 
     public record Group(String code, String name, String appliesTo) {}
+
+    public record Customer(
+            @Nullable UUID customerGroupId,
+            String currencyCode,
+            @Nullable UUID paymentTermsId,
+            @Nullable UUID defaultTaxCodeId,
+            java.math.@Nullable BigDecimal creditLimit,
+            boolean onHold) {}
 }

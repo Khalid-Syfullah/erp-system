@@ -17,6 +17,7 @@ import com.erp.platform.web.ApiException;
 import com.erp.platform.web.EntityTags;
 import com.erp.platform.web.FieldViolation;
 import com.erp.platform.web.MergePatch;
+import com.erp.platform.web.MergePatchLines;
 import com.erp.platform.web.PlatformErrorCode;
 import com.erp.platform.web.paging.ListQuery;
 import com.erp.platform.web.paging.PageResponse;
@@ -61,11 +62,11 @@ public class GoodsReceiptService {
     static final String SOURCE_MODULE = "procurement";
     static final String SOURCE_TYPE = "GOODS_RECEIPT";
     static final Set<String> PATCHABLE = Set.of("receiptDate", "supplierDeliveryNote", "notes", "lines");
-    static final List<LinePatchReader.Member> LINE_MEMBERS = List.of(
-            LinePatchReader.Member.uuid("purchaseOrderLineId", true),
-            LinePatchReader.Member.decimal("quantity", true),
-            LinePatchReader.Member.uuid("uomId", false),
-            LinePatchReader.Member.uuid("locationId", false));
+    static final List<MergePatchLines.Member> LINE_MEMBERS = List.of(
+            MergePatchLines.Member.uuid("purchaseOrderLineId", true),
+            MergePatchLines.Member.decimal("quantity", true),
+            MergePatchLines.Member.uuid("uomId", false),
+            MergePatchLines.Member.uuid("locationId", false));
 
     private final ReceiptRepository receipts;
     private final PurchaseOrderRepository orders;
@@ -445,7 +446,7 @@ public class GoodsReceiptService {
     }
 
     static List<ProcurementCommands.ReceiptLine> readLines(JsonNode array) {
-        return LinePatchReader.read(array, LINE_MEMBERS).stream()
+        return MergePatchLines.read(array, LINE_MEMBERS).stream()
                 .map(v -> new ProcurementCommands.ReceiptLine(
                         v.uuid("purchaseOrderLineId"), v.decimal("quantity"), v.uuid("uomId"), v.uuid("locationId")))
                 .toList();

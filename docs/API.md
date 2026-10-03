@@ -157,6 +157,7 @@ Master data is never deleted once referenced. It is deactivated with `POST /…/
 | `DUPLICATE_WORK_EMAIL` | 409 | Another employee of the company has this work email |
 | `CREDIT_LIMIT_EXCEEDED` | 422 | Credit check BLOCK |
 | `PARTNER_BLOCKED` / `PARTNER_ON_HOLD` | 422 | Partner restrictions |
+| `PRICE_MISSING` | 422 | A line has neither a unit price nor a price-list price (SAL-1) |
 | `QUANTITY_EXCEEDS_REMAINING` | 422 | Over-delivery, over-receipt, over-billing, over-crediting, over-return |
 | `MATCH_EXCEPTION` | 422 | 3-way match failed (posting a bill whose match was neither passed nor overridden) |
 | `DEBIT_NOTE_EXCEEDS_BILL` | 422 | A debit note would credit more than is left of its original bill |
@@ -374,9 +375,11 @@ These endpoints have no company in the path. Their permissions are global and he
 | `GET/POST {c}/partners/{id}/bank-accounts` · `DELETE …/{bankId}` (masked; `POST …/{bankId}/reveal` needs step-up and is audit-logged) | `partners.partner.read_bank` (list, reveal) / `partners.partner.manage_bank` (add, remove) |
 | `PUT {c}/partners/{id}/supplier-profile` [A] (`If-Match: W/"0"` creates it) | `partners.supplier.manage` |
 | `GET {c}/suppliers` (partners with a supplier profile) | `partners.partner.read` |
+| `PUT {c}/partners/{id}/customer-profile` [A] (`If-Match: W/"0"` creates it; `{currencyCode, customerGroupId?, paymentTermsId?, defaultTaxCodeId?, creditLimit?, isOnHold?}`) | `partners.customer.manage` |
+| `GET {c}/customers` (partners with a customer profile; filters `status`, `customerGroupId`, `currencyCode`, `isOnHold`) | `partners.partner.read` |
 | `GET/POST {c}/partner-groups` · `GET/PATCH …/{id}` [A] | `partners.partner.read` / `partners.partner.manage` |
 
-The partner detail embeds its addresses, contacts and supplier profile. Customer profiles (`PUT …/customer-profile`, `GET {c}/customers`) follow with Sales in Phase 7 (ADR-036).
+The partner detail embeds its addresses, contacts, supplier profile and customer profile (`isSupplier`, `isCustomer`). Customer profiles came with Sales in Phase 7 (ADR-037); the credit limit is in base currency.
 
 ### 17.5 Inventory
 
@@ -427,20 +430,22 @@ Branch-restricted users see requisitions, orders, receipts and returns of their 
 
 | Method & path | Permission |
 |---|---|
-| `GET/POST {c}/price-lists` · `GET/PATCH …/{id}` [A] · `GET/POST/PATCH/DELETE …/{id}/items[/{itemId}]` | `sales.price_list.read` / `.manage` |
-| `POST {c}/pricing/quote` `{customerId, currencyCode, date, lines[{variantId, quantity, uomId}]}` → computed prices and taxes (no persistence) | `sales.order.create` |
-| `GET/POST {c}/quotations` · `GET/PATCH/DELETE …/{id}` [A] · lines · `POST …/{id}/{send|accept|reject|cancel}` [A] | `sales.quotation.read` / `.manage` |
-| `GET/POST {c}/sales-orders` · `GET/PATCH/DELETE …/{id}` [A] · lines | `sales.order.read` / `.create` |
-| `POST {c}/sales-orders/{id}/confirm` [A][I] `{overrideCredit?: {reason}}` | `sales.order.confirm` (+ `.override_credit`) |
-| `POST {c}/sales-orders/{id}/{cancel|close}` [A] · `POST …/{id}/reserve` [A] (retry reservation of backorders) | `sales.order.cancel` / `.close` / `.confirm` |
-| `GET {c}/sales-orders/{id}/credit-check` | `sales.order.read` |
-| `GET/POST {c}/deliveries` (from order lines) · `GET/PATCH/DELETE …/{id}` [A] · `POST …/{id}/{post|cancel}` [A][I post] | `sales.delivery.read` / `.create` / `.post` |
-| `GET/POST {c}/sales-returns` · `POST …/{id}/{receive|cancel}` [A][I receive] | `sales.return.manage` |
-| `GET/POST {c}/invoices` (`documentType` INVOICE or CREDIT_NOTE; `POST {c}/invoices/from-order` `{salesOrderId, deliveryIds?}`) · `GET/PATCH/DELETE …/{id}` [A] · lines | `sales.invoice.read` / `.create` |
-| `POST {c}/invoices/{id}/{post|cancel}` [A][I post] | `sales.invoice.post` |
-| `GET {c}/invoices/{id}/pdf` · `POST {c}/invoices/{id}/send` [I] (email) | `sales.invoice.read` / `.send` |
-| `GET {c}/invoices/{id}/settlement` | `sales.invoice.read` |
-| `GET/PUT {c}/settings/sales` [A] | `sales.settings.manage` |
+| `GET/POST {c}/price-lists` · `GET/PATCH …/{id}` [A] · `GET/POST {c}/price-lists/{id}/items` · `GET/PATCH/DELETE …/items/{itemId}` [A] | `sales.price_list.read` / `.manage` |
+| `POST {c}/pricing/quote` `{customerId, currencyCode?, date?, priceListId?, lines[{variantId, quantity, uomId, taxCodeId?}]}` → computed prices and taxes (no persistence) | `sales.order.create` |
+| `GET/POST {c}/quotations` · `GET/PATCH/DELETE …/{id}` [A] (lines replaced through the `lines` array) · `POST …/{id}/{send|cancel}` [A] · `/reject` [A] `{reason}` · `/accept` [A] (optional `Idempotency-Key`) → 201 with the new draft sales order | `sales.quotation.read` / `.manage` (+ `sales.order.create` to accept) |
+| `GET/POST {c}/sales-orders` · `GET/PATCH/DELETE …/{id}` [A] (lines replaced through the `lines` array; a line without `unitPrice` takes the price-list price) | `sales.order.read` / `.create` (+ `.override_price` / `.discount_high`, SAL-1) |
+| `POST {c}/sales-orders/{id}/confirm` [A][I] `{overrideCredit?: {reason}}` | `sales.order.confirm` (+ `.override_credit` when the check blocks) |
+| `POST {c}/sales-orders/{id}/{cancel|close}` [A] `{reason?}` · `POST …/{id}/reserve` [A] (retry reservation of backorders) | `sales.order.cancel` / `.close` / `.confirm` |
+| `GET {c}/sales-orders/{id}/credit-check` (mode, limit, hold, open receivables, open orders, order total in base currency, outcome) | `sales.order.read` |
+| `GET/POST {c}/deliveries` (`{salesOrderId, deliveryDate?, carrier?, trackingNumber?, lines?[{salesOrderLineId, quantity, uomId?, locationId?}]}`; no `lines`: everything open on the stockable lines) · `GET/PATCH/DELETE …/{id}` [A] | `sales.delivery.read` / `.create` |
+| `POST {c}/deliveries/{id}/post` [A][I] · `/cancel` [A] | `sales.delivery.post` |
+| `GET/POST {c}/sales-returns` (`{deliveryId, returnDate?, reason, lines[{deliveryLineId, quantity, uomId?}]}`) · `GET …/{id}` · `POST …/{id}/receive` [A][I] · `/cancel` [A] | `sales.return.manage` |
+| `GET/POST {c}/invoices` (`documentType` INVOICE or CREDIT_NOTE; invoice lines against `salesOrderLineId`, or `variantId` for direct invoices of services; credit note lines against `originalInvoiceLineId`, optionally `salesReturnLineId`) · `POST {c}/invoices/from-order` `{salesOrderId, deliveryIds?}` · `GET/PATCH/DELETE …/{id}` [A] | `sales.invoice.read` / `.create` (+ `.create_direct` without an order) |
+| `POST {c}/invoices/{id}/post` [A][I] · `/cancel` [A] | `sales.invoice.post` |
+| `GET {c}/invoices/{id}/settlement` (open amount through the port to Accounting; `UNKNOWN` until Phase 8) | `sales.invoice.read` |
+| `GET/PUT {c}/settings/sales` [A] (`defaultInvoicePolicy`, `creditCheckMode`, `quotationValidityDays`, `reserveOnConfirm`, `discountApprovalThresholdPercent`) | `sales.settings.manage` |
+
+Branch-restricted users see quotations, orders, deliveries and returns of their branches (the warehouse's branch) only; invoices are company-level documents. Amounts are always computed by the server (G-7). Quantity errors (over-delivery, over-return, over-invoicing, over-crediting) answer `422 QUANTITY_EXCEEDS_REMAINING` with the line, the requested and the open quantity in `errors[].meta`; a blocked credit check answers `422 CREDIT_LIMIT_EXCEEDED` or `PARTNER_ON_HOLD` with the exposure. The invoice PDF and e-mail (`GET {c}/invoices/{id}/pdf`, `POST {c}/invoices/{id}/send` [I], `sales.invoice.send`) follow with the document rendering and notification pipeline (ADR-037). Customer payments are Accounting endpoints (§17.8, Phase 8).
 
 ### 17.8 Accounting
 

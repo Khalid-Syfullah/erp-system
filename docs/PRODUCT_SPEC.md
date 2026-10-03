@@ -573,6 +573,13 @@ stateDiagram-v2
 - **Sales return:** `DRAFT → RECEIVED | CANCELLED`. RECEIVED posts a `SALES_RETURN` movement and MAY auto-create a draft credit note.
 - **Invoice / credit note:** `DRAFT → POSTED`, or `DRAFT → CANCELLED`. Posted invoices are corrected only by credit notes.
 
+Clarifications (ADR-037):
+
+- A quotation is accepted only within its validity; the draft order it creates keeps the quoted prices and links back to it. That order is cancelled, never deleted.
+- Delivery progress follows the stockable lines' delivered quantity; returns do not move an order back. An order without stockable lines has nothing to deliver and closes from `CONFIRMED` when fully invoiced.
+- A confirmed order with nothing delivered is cancelled, not closed, unless it was already invoiced (ORDERED policy). Closing and cancelling release the remaining reservations and cancel draft deliveries; cancelling also cancels draft invoices. `CLOSED` orders take no more deliveries, but invoices for what was delivered and credit notes can still be posted.
+- Automatic draft credit notes on return receipt (the MAY above) are not implemented in v1; the credit note is created from the invoice, naming the return.
+
 ### 9.3 Rules
 
 - **SAL-1. Pricing.** The price list is chosen in this order: explicit on the order, then the customer group's list, then the company default for the currency. Within a list, the item with the highest `min_quantity` ≤ the ordered quantity for the variant, UoM and date wins. A manual price override requires `sales.order.override_price`, and a discount above the configured threshold requires `sales.order.discount_high`.
@@ -581,10 +588,10 @@ stateDiagram-v2
 - **SAL-4. Delivery quantity** ≤ ordered − delivered. A delivery posts a `SALES_ISSUE` that consumes the reservation, and records the line's `unit_cost_base` from inventory.
 - **SAL-5. Invoice policy:**
   - `DELIVERED`: invoiceable qty = delivered − returned − invoiced (+ credited back).
-  - `ORDERED`: invoiceable qty = ordered − invoiced. Use this for services and prepayments.
+  - `ORDERED`: invoiceable qty = ordered − returned − invoiced. Use this for services and prepayments. Non-stockable lines always follow this rule.
 
   An invoice can combine several deliveries of the same order. Invoices without an order (direct invoices) are allowed for SERVICE products with `sales.invoice.create_direct`.
-- **SAL-6. Credit notes** reference an invoice or a sales return. The credited quantity cannot exceed the invoiced quantity minus quantities already credited.
+- **SAL-6. Credit notes** reference an invoice, line by line, and for returned goods also the sales return. The credited quantity cannot exceed the invoiced quantity minus quantities already credited (nor, per return line, the returned quantity minus what was already credited), and the credited unit price cannot exceed the invoiced one. Only credits for returned goods give the order line back its invoiceable quantity ("credited back" in SAL-5); price-only credits do not.
 - **SAL-7. Returns** reference a posted delivery. Returned qty ≤ delivered − already returned. Stock comes back at the original unit cost.
 - **SAL-8.** Revenue is recognized at invoice. COGS is recognized at delivery. Delivered-not-invoiced goods appear in the "uninvoiced deliveries" report. Accruing unbilled revenue is out of scope in v1 (ADR-015).
 

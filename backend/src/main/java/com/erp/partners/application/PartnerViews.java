@@ -24,16 +24,18 @@ public final class PartnerViews {
             String status,
             @Nullable String notes,
             boolean isSupplier,
+            boolean isCustomer,
             OffsetDateTime createdAt,
             OffsetDateTime updatedAt,
             int version) {}
 
-    /** A partner with its addresses, contacts and supplier profile. */
+    /** A partner with its addresses, contacts and profiles. */
     public record PartnerDetail(
             Partner partner,
             List<Address> addresses,
             List<Contact> contacts,
-            @Nullable Supplier supplier) {}
+            @Nullable Supplier supplier,
+            @Nullable Customer customer) {}
 
     public record Address(
             UUID id,
@@ -88,6 +90,20 @@ public final class PartnerViews {
 
     /** A row of the supplier list: the partner with its profile. */
     public record SupplierListItem(Partner partner, Supplier supplier) {}
+
+    /** {@code creditLimit} is in the company's base currency; {@code null}: no limit. */
+    public record Customer(
+            UUID partnerId,
+            @Nullable UUID customerGroupId,
+            String currencyCode,
+            @Nullable UUID paymentTermsId,
+            @Nullable UUID defaultTaxCodeId,
+            java.math.@Nullable BigDecimal creditLimit,
+            boolean onHold,
+            OffsetDateTime updatedAt,
+            int version) {}
+
+    public record CustomerListItem(Partner partner, Customer customer) {}
 
     public record Group(
             UUID id,

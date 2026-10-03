@@ -1,7 +1,5 @@
-package com.erp.procurement.application;
+package com.erp.platform.web;
 
-import com.erp.platform.web.ApiException;
-import com.erp.platform.web.FieldViolation;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -14,55 +12,55 @@ import org.jspecify.annotations.Nullable;
 import tools.jackson.databind.JsonNode;
 
 /**
- * Reads the {@code lines} array of a document merge patch (arrays are replaced whole, API.md §4),
+ * Reads a line array of a document merge patch (arrays are replaced whole, API.md §4),
  * as strictly as request bodies are read: decimals as strings, no unknown members, every problem
  * reported with its JSON pointer.
  */
-final class LinePatchReader {
+public final class MergePatchLines {
 
-    enum Kind {
+    public enum Kind {
         UUID,
         DECIMAL,
         TEXT,
         DATE
     }
 
-    record Member(String name, Kind kind, boolean required, int maxLength) {
+    public record Member(String name, Kind kind, boolean required, int maxLength) {
 
-        static Member uuid(String name, boolean required) {
+        public static Member uuid(String name, boolean required) {
             return new Member(name, Kind.UUID, required, 0);
         }
 
-        static Member decimal(String name, boolean required) {
+        public static Member decimal(String name, boolean required) {
             return new Member(name, Kind.DECIMAL, required, 0);
         }
 
-        static Member text(String name, int maxLength) {
+        public static Member text(String name, int maxLength) {
             return new Member(name, Kind.TEXT, false, maxLength);
         }
     }
 
     /** One line's values by member name (absent and null are both {@code null}). */
-    record Values(Map<String, @Nullable Object> values) {
+    public record Values(Map<String, @Nullable Object> values) {
 
-        @Nullable UUID uuid(String name) {
+        public @Nullable UUID uuid(String name) {
             return (UUID) values.get(name);
         }
 
-        @Nullable BigDecimal decimal(String name) {
+        public @Nullable BigDecimal decimal(String name) {
             return (BigDecimal) values.get(name);
         }
 
-        @Nullable String text(String name) {
+        public @Nullable String text(String name) {
             return (String) values.get(name);
         }
     }
 
     private static final Pattern DECIMAL = Pattern.compile("^(0|[1-9][0-9]{0,12})(\\.[0-9]{1,6})?$");
 
-    private LinePatchReader() {}
+    private MergePatchLines() {}
 
-    static List<Values> read(@Nullable JsonNode array, List<Member> members) {
+    public static List<Values> read(@Nullable JsonNode array, List<Member> members) {
         if (array == null || !array.isArray()) {
             throw ApiException.validationFailed(
                     "The lines are invalid.",

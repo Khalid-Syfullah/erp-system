@@ -1,6 +1,8 @@
 package com.erp.partners.application;
 
 import com.erp.partners.api.PartnersFacade;
+import com.erp.partners.persistence.CustomerRepository;
+import com.erp.partners.persistence.GroupRepository;
 import com.erp.partners.persistence.PartnerRepository;
 import com.erp.partners.persistence.SupplierRepository;
 import com.erp.platform.context.CurrentContext;
@@ -17,11 +19,71 @@ import org.springframework.transaction.annotation.Transactional;
 class PartnersDirectory implements PartnersFacade {
 
     private final SupplierRepository suppliers;
+    private final CustomerRepository customers;
     private final PartnerRepository partners;
+    private final GroupRepository groups;
 
-    PartnersDirectory(SupplierRepository suppliers, PartnerRepository partners) {
+    PartnersDirectory(
+            SupplierRepository suppliers,
+            CustomerRepository customers,
+            PartnerRepository partners,
+            GroupRepository groups) {
         this.suppliers = suppliers;
+        this.customers = customers;
         this.partners = partners;
+        this.groups = groups;
+    }
+
+    @Override
+    @Transactional
+    public boolean customerGroupUsable(UUID groupId) {
+        return groups.findForUse(CurrentContext.requireCompany(), groupId)
+                .filter(g -> g.isActive() && "CUSTOMER".equals(g.appliesTo()))
+                .isPresent();
+    }
+
+    @Override
+    @Transactional
+    public Optional<CustomerInfo> customerForUse(UUID customerId) {
+        return customers
+                .findWithPartner(CurrentContext.requireCompany(), customerId, true)
+                .map(PartnersDirectory::toCustomerInfo);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<CustomerInfo> customer(UUID customerId) {
+        return customers
+                .findWithPartner(CurrentContext.requireCompany(), customerId, false)
+                .map(PartnersDirectory::toCustomerInfo);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<AddressInfo> defaultAddress(UUID partnerId, String addressType) {
+        return partners.addresses(CurrentContext.requireCompany(), partnerId).stream()
+                .filter(a -> a.isDefault() && a.addressType().equals(addressType))
+                .findFirst()
+                .map(a -> new AddressInfo(
+                        a.addressType(), a.line1(), a.line2(), a.city(), a.region(), a.postalCode(), a.countryCode()));
+    }
+
+    private static CustomerInfo toCustomerInfo(PartnerViews.CustomerListItem item) {
+        PartnerViews.Partner p = item.partner();
+        PartnerViews.Customer c = item.customer();
+        return new CustomerInfo(
+                p.id(),
+                p.code(),
+                p.name(),
+                p.legalName(),
+                p.status(),
+                p.taxRegistrationNo(),
+                c.customerGroupId(),
+                c.currencyCode(),
+                c.paymentTermsId(),
+                c.defaultTaxCodeId(),
+                c.creditLimit(),
+                c.onHold());
     }
 
     @Override

@@ -12,6 +12,7 @@ import com.erp.platform.web.ApiException;
 import com.erp.platform.web.EntityTags;
 import com.erp.platform.web.FieldViolation;
 import com.erp.platform.web.MergePatch;
+import com.erp.platform.web.MergePatchLines;
 import com.erp.platform.web.PlatformErrorCode;
 import com.erp.platform.web.paging.ListQuery;
 import com.erp.platform.web.paging.PageResponse;
@@ -36,13 +37,13 @@ import tools.jackson.databind.JsonNode;
 public class RequisitionService {
 
     static final Set<String> PATCHABLE = Set.of("branchId", "departmentId", "neededBy", "notes", "lines");
-    static final List<LinePatchReader.Member> LINE_MEMBERS = List.of(
-            LinePatchReader.Member.uuid("variantId", true),
-            LinePatchReader.Member.text("description", 300),
-            LinePatchReader.Member.decimal("quantity", true),
-            LinePatchReader.Member.uuid("uomId", true),
-            LinePatchReader.Member.decimal("estimatedUnitPrice", false),
-            LinePatchReader.Member.uuid("suggestedSupplierId", false));
+    static final List<MergePatchLines.Member> LINE_MEMBERS = List.of(
+            MergePatchLines.Member.uuid("variantId", true),
+            MergePatchLines.Member.text("description", 300),
+            MergePatchLines.Member.decimal("quantity", true),
+            MergePatchLines.Member.uuid("uomId", true),
+            MergePatchLines.Member.decimal("estimatedUnitPrice", false),
+            MergePatchLines.Member.uuid("suggestedSupplierId", false));
 
     private final RequisitionRepository requisitions;
     private final DocumentPricing pricing;
@@ -261,7 +262,7 @@ public class RequisitionService {
     }
 
     static List<ProcurementCommands.RequisitionLine> readLines(JsonNode array) {
-        return LinePatchReader.read(array, LINE_MEMBERS).stream()
+        return MergePatchLines.read(array, LINE_MEMBERS).stream()
                 .map(v -> new ProcurementCommands.RequisitionLine(
                         v.uuid("variantId"),
                         v.text("description"),

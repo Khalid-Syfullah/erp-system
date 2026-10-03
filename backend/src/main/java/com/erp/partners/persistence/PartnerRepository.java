@@ -1,5 +1,6 @@
 package com.erp.partners.persistence;
 
+import static com.erp.db.partners.Tables.CUSTOMERS;
 import static com.erp.db.partners.Tables.PARTNERS_;
 import static com.erp.db.partners.Tables.PARTNER_ADDRESSES;
 import static com.erp.db.partners.Tables.PARTNER_CONTACTS;
@@ -41,8 +42,11 @@ public class PartnerRepository {
             .build();
 
     /** Partners with their (optional) supplier profile: the profile's key tells whether it exists. */
-    private static final Table<Record> WITH_PROFILE =
-            PARTNERS_.leftJoin(SUPPLIERS).on(SUPPLIERS.PARTNER_ID.eq(PARTNERS_.ID));
+    private static final Table<Record> WITH_PROFILE = PARTNERS_
+            .leftJoin(SUPPLIERS)
+            .on(SUPPLIERS.PARTNER_ID.eq(PARTNERS_.ID))
+            .leftJoin(CUSTOMERS)
+            .on(CUSTOMERS.PARTNER_ID.eq(PARTNERS_.ID));
 
     private final DSLContext dsl;
     private final KeysetPaginator paginator;
@@ -293,6 +297,7 @@ public class PartnerRepository {
     private static List<SelectField<?>> columns() {
         List<SelectField<?>> fields = new java.util.ArrayList<>(List.of(PARTNERS_.fields()));
         fields.add(SUPPLIERS.PARTNER_ID);
+        fields.add(CUSTOMERS.PARTNER_ID);
         return fields;
     }
 
@@ -311,6 +316,7 @@ public class PartnerRepository {
                 r.get(PARTNERS_.STATUS),
                 r.get(PARTNERS_.NOTES),
                 r.get(SUPPLIERS.PARTNER_ID) != null,
+                r.indexOf(CUSTOMERS.PARTNER_ID) >= 0 && r.get(CUSTOMERS.PARTNER_ID) != null,
                 r.get(PARTNERS_.CREATED_AT),
                 r.get(PARTNERS_.UPDATED_AT),
                 r.get(PARTNERS_.VERSION));

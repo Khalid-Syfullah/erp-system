@@ -16,6 +16,7 @@ class PartnersConstraintErrors implements ConstraintErrorMapping {
                 Map.entry("uq_partners__company_id_code", PlatformErrorCode.DUPLICATE_CODE),
                 Map.entry("uq_partner_groups__company_id_applies_to_code", PlatformErrorCode.DUPLICATE_CODE),
                 Map.entry("pk_suppliers", PlatformErrorCode.CONFLICT),
+                Map.entry("pk_customers", PlatformErrorCode.CONFLICT),
                 Map.entry("uq_partner_addresses__default", PlatformErrorCode.CONFLICT),
                 Map.entry("uq_partner_contacts__primary", PlatformErrorCode.CONFLICT),
                 Map.entry("uq_partner_bank_accounts__default", PlatformErrorCode.CONFLICT));

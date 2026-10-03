@@ -483,7 +483,9 @@ partners.partner_bank_accounts (id, company_id, partner_id, bank_name, account_h
   -- Accounts are added or removed, never edited (every change is visible in the audit log).
 
 partners.customers (partner_id uuid PK, company_id NOT NULL, FK (company_id, partner_id) → partners,
-  customer_group_id uuid NULL → partner_groups,           -- must be applies_to CUSTOMER (trigger/app)
+  customer_group_id uuid NULL → partner_groups,
+  group_applies_to text GENERATED ALWAYS AS ('CUSTOMER') STORED,   -- FK (company_id, customer_group_id, group_applies_to)
+                                                                  -- → partner_groups (company_id, id, applies_to): customer groups only
   currency_code char(3) NOT NULL → org.currencies,
   payment_terms_id uuid NULL → org.payment_terms,
   default_tax_code_id uuid NULL → org.tax_codes,
@@ -497,7 +499,7 @@ partners.suppliers (partner_id uuid PK, company_id, FK → partners,
                                                                   -- → partner_groups (company_id, id, applies_to): supplier groups only
   currency_code NOT NULL, payment_terms_id NULL, default_tax_code_id NULL,
   lead_time_days integer NULL CHECK (BETWEEN 0 AND 3650), + std, UNIQUE (company_id, partner_id))
--- partners.customers (above) is created with Sales in Phase 7 (ADR-036).
+-- partners.customers (above) was created with Sales in Phase 7 (ADR-037).
 ```
 
 ### 5.5 `inventory`
@@ -824,84 +826,106 @@ erDiagram
 sales.settings (company_id PK,
   default_invoice_policy text NOT NULL DEFAULT 'DELIVERED' CHECK (IN ('ORDERED','DELIVERED')),
   credit_check_mode text NOT NULL DEFAULT 'WARN' CHECK (IN ('NONE','WARN','BLOCK')),
-  quotation_validity_days integer NOT NULL DEFAULT 30,
-  reserve_on_confirm boolean NOT NULL DEFAULT true, + std)
+  quotation_validity_days integer NOT NULL DEFAULT 30 CHECK (BETWEEN 1 AND 365),
+  reserve_on_confirm boolean NOT NULL DEFAULT true,
+  discount_approval_threshold_percent numeric(7,4) NULL CHECK (BETWEEN 0 AND 100),   -- SAL-1; NULL: no limit
+  + std)
 
 sales.price_lists (id, company_id C, code, name, currency_code, prices_include_tax boolean,
-  customer_group_id NULL → partners.partner_groups, is_default boolean, valid_from, valid_to, is_active, + std,
-  UNIQUE (company_id, code))   -- partial unique (company_id, currency_code) WHERE is_default
-sales.price_list_items (id, company_id, price_list_id, variant_id, uom_id,
+  customer_group_id NULL, group_applies_to GENERATED ('CUSTOMER'),   -- typed FK: customer groups only
+  is_default boolean, valid_from, valid_to, is_active, + std,
+  UNIQUE (company_id, code))   -- uq_price_lists__default: partial unique (company_id, currency_code) WHERE is_default
+sales.price_list_items (id, company_id, price_list_id ON DELETE CASCADE, variant_id, uom_id,
   min_quantity numeric(18,6) NOT NULL DEFAULT 0, unit_price numeric(19,6) CHECK (>= 0),
   valid_from date NULL, valid_to date NULL, + std,
   UNIQUE NULLS NOT DISTINCT (price_list_id, variant_id, uom_id, min_quantity, valid_from))
 
-sales.quotations (id, company_id C, number, customer_id → partners.customers, branch_id, quotation_date, valid_until,
-  currency_code, price_list_id NULL, prices_include_tax,
+sales.quotations (id, company_id C, number NULL, customer_id → partners.customers, branch_id, warehouse_id,
+  quotation_date, valid_until CHECK (>= quotation_date),
+  currency_code, price_list_id NULL, prices_include_tax, payment_terms_id NULL,
   status CHECK (IN ('DRAFT','SENT','ACCEPTED','REJECTED','EXPIRED','CANCELLED')),
-  subtotal, tax_total, total, sales_order_id NULL UNIQUE, + std)
-sales.quotation_lines (same shape as sales_order_lines without fulfilment columns)
+  subtotal, tax_total, total, sales_order_id NULL UNIQUE → sales_orders, sent_at, sent_by, rejection_reason, notes, + std,
+  CHECK (status IN ('DRAFT','CANCELLED') OR number IS NOT NULL),          -- numbered when sent
+  CHECK ((status = 'ACCEPTED') = (sales_order_id IS NOT NULL)))
+sales.quotation_lines (same priced shape as sales_order_lines, without is_stockable and the fulfilment columns)
 
 sales.sales_orders (id, company_id C, number NULL,
   customer_id → partners.customers, quotation_id NULL → quotations,
   branch_id → org.branches, warehouse_id → inventory.warehouses,
-  order_date date, requested_date date NULL, customer_reference text NULL,
+  order_date date, requested_date date NULL CHECK (>= order_date), customer_reference text NULL,
   currency_code, price_list_id NULL, prices_include_tax, payment_terms_id NULL,
   invoice_policy text NOT NULL CHECK (IN ('ORDERED','DELIVERED')),
-  shipping_address jsonb NOT NULL,      -- snapshot (immutable copy of address at order time)
+  shipping_address jsonb NOT NULL,      -- snapshot (immutable copy of the customer's address at order time)
   billing_address  jsonb NOT NULL,
   status text NOT NULL CHECK (IN ('DRAFT','CONFIRMED','PARTIALLY_DELIVERED','DELIVERED','CLOSED','CANCELLED')),
   invoice_status text NOT NULL DEFAULT 'NOT_INVOICED' CHECK (IN ('NOT_INVOICED','PARTIALLY_INVOICED','INVOICED')),
-  credit_check_result text NULL CHECK (IN ('PASSED','WARNED','OVERRIDDEN')), credit_override_by uuid NULL,
-  subtotal, tax_total, total numeric(19,4), confirmed_at, confirmed_by, cancelled_reason, + std,
-  UNIQUE (company_id, number))
+  exchange_rate numeric(19,10) NULL,    -- set at confirmation: the rate the credit check used
+  credit_check_result text NULL CHECK (IN ('PASSED','WARNED','OVERRIDDEN')),
+  credit_override_by uuid NULL, credit_override_reason text NULL,   -- both set exactly when OVERRIDDEN
+  subtotal, tax_total, total numeric(19,4), confirmed_at, confirmed_by, cancel_reason, close_reason, notes, + std,
+  UNIQUE (company_id, number),
+  CHECK (status IN ('DRAFT','CANCELLED') OR (number, confirmed_at, exchange_rate, credit_check_result all NOT NULL)))
   -- ix (company_id, customer_id, order_date DESC); ix (company_id, status)
 
 sales.sales_order_lines (id, company_id, sales_order_id, line_no, variant_id, description,
+  is_stockable boolean NOT NULL,        -- product type snapshot: only stockable lines are reserved and delivered
   quantity CHECK (> 0), uom_id, quantity_base CHECK (> 0),
   unit_price numeric(19,6) CHECK (>= 0), discount_percent numeric(7,4) DEFAULT 0, tax_code_id NULL,
   net_amount, tax_amount, total_amount numeric(19,4),
+  reservation_id NULL → inventory.stock_reservations,
   reserved_quantity_base  numeric(18,6) NOT NULL DEFAULT 0,      -- mirror for display; authority = inventory.stock_reservations
-  delivered_quantity_base numeric(18,6) NOT NULL DEFAULT 0 CHECK (>= 0),
-  returned_quantity_base  numeric(18,6) NOT NULL DEFAULT 0 CHECK (>= 0),
+  delivered_quantity_base numeric(18,6) NOT NULL DEFAULT 0,
+  returned_quantity_base  numeric(18,6) NOT NULL DEFAULT 0,
   invoiced_quantity_base  numeric(18,6) NOT NULL DEFAULT 0 CHECK (>= 0),
   + std, UNIQUE (sales_order_id, line_no),
-  CHECK (delivered_quantity_base <= quantity_base), CHECK (returned_quantity_base <= delivered_quantity_base))
+  CHECK (0 <= delivered_quantity_base <= quantity_base AND 0 <= returned_quantity_base <= delivered_quantity_base),  -- SAL-4, SAL-7
+  CHECK (is_stockable OR (delivered_quantity_base = 0 AND reserved_quantity_base = 0)))
 
-sales.deliveries (id, company_id C, number NULL, sales_order_id, customer_id, warehouse_id, delivery_date,
+sales.deliveries (id, company_id C, number NULL, sales_order_id, customer_id, branch_id, warehouse_id, delivery_date,
   status CHECK (IN ('DRAFT','POSTED','CANCELLED')), shipping_address jsonb, carrier text NULL, tracking_number text NULL,
-  stock_movement_id NULL UNIQUE → inventory.stock_movements, posted_at, posted_by, + std)
-sales.delivery_lines (id, company_id, delivery_id, line_no, sales_order_line_id, variant_id, location_id,
+  stock_movement_id NULL UNIQUE → inventory.stock_movements, notes, posted_at, posted_by, + std,
+  CHECK ((status = 'POSTED') = (number, stock_movement_id, posted_at all NOT NULL)))
+sales.delivery_lines (id, company_id, delivery_id, line_no, sales_order_line_id, variant_id,
+  location_id NULL,                     -- NULL in a draft: the warehouse's default stock location; set at posting
   quantity, uom_id, quantity_base CHECK (> 0),
-  unit_cost_base numeric(19,6) NULL,            -- filled from inventory at posting (for returns at original cost)
-  returned_quantity_base numeric(18,6) NOT NULL DEFAULT 0, + std)
+  unit_cost_base numeric(19,6) NULL, value_base numeric(19,4) NULL,   -- from inventory at posting (returns at original cost)
+  returned_quantity_base numeric(18,6) NOT NULL DEFAULT 0 CHECK (<= quantity_base), + std)
 
-sales.sales_returns (id, company_id C, number, customer_id, sales_order_id, delivery_id → deliveries, warehouse_id,
-  return_date, reason text NOT NULL, status CHECK (IN ('DRAFT','RECEIVED','CANCELLED')),
-  stock_movement_id NULL UNIQUE, credit_note_id NULL → invoices, + std)
-sales.sales_return_lines (id, company_id, sales_return_id, line_no, delivery_line_id, variant_id, location_id,
-  quantity, uom_id, quantity_base CHECK (> 0), unit_cost_base numeric(19,6) NOT NULL, + std)
+sales.sales_returns (id, company_id C, number NULL, customer_id, sales_order_id, delivery_id → deliveries,
+  branch_id, warehouse_id, return_date, reason text NOT NULL, status CHECK (IN ('DRAFT','RECEIVED','CANCELLED')),
+  stock_movement_id NULL UNIQUE, received_at, received_by, + std,
+  CHECK ((status = 'RECEIVED') = (number, stock_movement_id, received_at all NOT NULL)))
+sales.sales_return_lines (id, company_id, sales_return_id, line_no, delivery_line_id, variant_id, location_id NULL,
+  quantity, uom_id, quantity_base CHECK (> 0), unit_cost_base numeric(19,6) NOT NULL, value_base numeric(19,4) NULL,
+  credited_quantity_base numeric(18,6) NOT NULL DEFAULT 0 CHECK (<= quantity_base),   -- SAL-6
+  + std)
 
 sales.invoices (id, company_id C,
   document_type text NOT NULL CHECK (IN ('INVOICE','CREDIT_NOTE')),
   number text NULL,                                       -- gapless, assigned at posting
   customer_id → partners.customers, sales_order_id NULL → sales_orders,
   original_invoice_id NULL → invoices, sales_return_id NULL → sales_returns,
-  invoice_date date NOT NULL, accounting_date date NOT NULL, due_date date NOT NULL,
+  invoice_date date NOT NULL, accounting_date date NOT NULL, due_date date NOT NULL CHECK (>= invoice_date),
   currency_code, exchange_rate numeric(19,10) CHECK (> 0), prices_include_tax, payment_terms_id NULL,
   billing_address jsonb NOT NULL, customer_tax_registration_no text NULL,   -- snapshot
   status text NOT NULL CHECK (IN ('DRAFT','POSTED','CANCELLED')),           -- CANCELLED only from DRAFT
   subtotal, tax_total, total, subtotal_base, tax_total_base, total_base numeric(19,4),
-  posted_at, posted_by, + std,
+  notes, posted_at, posted_by, + std,
   UNIQUE (company_id, number),
-  CHECK (total = subtotal + tax_total), CHECK (total >= 0),
-  CHECK (document_type = 'INVOICE' OR original_invoice_id IS NOT NULL OR sales_return_id IS NOT NULL))
+  CHECK (total = subtotal + tax_total AND total_base = subtotal_base + tax_total_base, all >= 0),
+  CHECK ((document_type = 'CREDIT_NOTE') = (original_invoice_id IS NOT NULL)
+         AND (sales_return_id IS NULL OR document_type = 'CREDIT_NOTE')),   -- a credit note always credits an invoice
+  CHECK ((status = 'POSTED') = (number IS NOT NULL AND posted_at IS NOT NULL)))
   -- ix (company_id, customer_id, invoice_date DESC); ix (company_id, status, invoice_date)
-sales.invoice_lines (id, company_id, invoice_id, line_no, sales_order_line_id NULL, delivery_line_id NULL, variant_id NULL,
-  description NOT NULL, quantity CHECK (> 0), uom_id NULL, quantity_base NULL, unit_price numeric(19,6) CHECK (>= 0),
-  discount_percent, tax_code_id NULL, net_amount, tax_amount, total_amount, net_amount_base numeric(19,4),
-  branch_id NULL, department_id NULL, + std)
-sales.invoice_taxes (invoice_id, tax_code_id, company_id, taxable_amount, tax_amount, taxable_amount_base, tax_amount_base,
-  PRIMARY KEY (invoice_id, tax_code_id))
+sales.invoice_lines (id, company_id, invoice_id, line_no, sales_order_line_id NULL, delivery_line_id NULL,
+  original_invoice_line_id NULL → invoice_lines, sales_return_line_id NULL → sales_return_lines,   -- credit notes
+  variant_id NOT NULL, description NOT NULL, quantity CHECK (> 0), uom_id, quantity_base CHECK (> 0),
+  unit_price numeric(19,6) CHECK (>= 0), discount_percent, tax_code_id NULL, net_amount, tax_amount, total_amount,
+  net_amount_base, tax_amount_base numeric(19,4), branch_id NULL, department_id NULL,
+  credited_quantity_base numeric(18,6) NOT NULL DEFAULT 0 CHECK (<= quantity_base),   -- SAL-6 (invoices)
+  + std, CHECK (sales_return_line_id IS NULL OR original_invoice_line_id IS NOT NULL))
+sales.invoice_taxes (invoice_id, tax_code_id, company_id, rate_percent, taxable_amount, tax_amount,
+  taxable_amount_base, tax_amount_base, PRIMARY KEY (invoice_id, tax_code_id))
 ```
 
 Amounts on credit notes are stored **positive**. The document type determines the sign when the document posts to the GL.
@@ -1273,7 +1297,7 @@ admin.feature_flags (key text PK, is_enabled boolean, company_id uuid NULL, upda
 | I5 | Posted movements are immutable; corrections are REVERSAL movements | Trigger `trg_posted_immutable` | No update API |
 | D1 | Document numbers are gapless and unique per company/type/scope | UNIQUE plus a sequence table lock | Assigned only at posting or submission |
 | D2 | Draft-only deletion / cancellation | Trigger `trg_draft_only_delete` on document headers | State machine |
-| D3 | Fulfilment quantities never exceed ordered (sales); receipts allow the over-receipt tolerance | CHECK (sales); application (procurement tolerance) | Services lock the order line `FOR UPDATE` |
+| D3 | Fulfilment quantities never exceed ordered (sales); receipts allow the over-receipt tolerance | CHECK (sales: delivered ≤ ordered, returned ≤ delivered per order and delivery line; credited ≤ invoiced per invoice line and ≤ returned per return line); application (procurement tolerance; sales invoiceable quantity, SAL-5) | Services lock the order header `FOR UPDATE` (and the credited invoice) before checking |
 | O1 | No cross-company references | Composite FKs + RLS | Context filter |
 
 ---
@@ -1341,7 +1365,7 @@ System postings (event listeners) use exactly the same sequence inside the publi
 ### 8.3 Generic
 
 - `platform.guard_draft_only_delete()`: attached to every document header. It rejects `DELETE` unless `OLD.status = 'DRAFT'`.
-- `platform.guard_posted_document()`: attached to `sales.invoices`, `accounting.payments`, `accounting.expenses` and `payroll.payroll_runs`. (Procurement's documents, `supplier_bills` included, use the stricter guards of §8.4.) It rejects changes to financial columns once `status` is in the module's "posted" set. The allowed transitions are `payments POSTED→VOIDED`, `expenses POSTED→REVERSED` and `payroll_runs POSTED→PAID`.
+- `platform.guard_posted_document()`: attached to `accounting.payments`, `accounting.expenses` and `payroll.payroll_runs`. (Procurement's and Sales' documents, `supplier_bills` and `invoices` included, use the stricter guards of §8.4 and §8.5.) It rejects changes to financial columns once `status` is in the module's "posted" set. The allowed transitions are `payments POSTED→VOIDED`, `expenses POSTED→REVERSED` and `payroll_runs POSTED→PAID`.
 - `admin.guard_audit_append_only()` on `admin.audit_log`.
 - `org.guard_company_base_currency()`: blocks a change of `base_currency` once the company has a posted journal entry. Because org must not read accounting tables, this is **checked in the application** through `AccountingFacade.hasPostings(companyId)`, exposed to org through a port that Accounting implements. The trigger version is intentionally not used, to respect boundaries.
 - Tree cycle guards (`org.departments` since Phase 4; `accounting.accounts`, `inventory.product_categories`, `inventory.locations` later). Each walks the ancestors of the new parent after taking a per-company advisory lock, and raises `check_violation` with the constraint name `ck_<table>__no_cycle`.
@@ -1350,6 +1374,11 @@ System postings (event listeners) use exactly the same sequence inside the publi
 
 - `procurement.guard_frozen_document(<columns>)` on every document header (requisitions, orders, receipts, returns, bills): a DRAFT changes freely and may be deleted; any other header changes only the listed state columns (orders: `status`, `billing_status`, approval and reason columns; requisitions: `status`, approval and reasons; receipts, returns and bills: none) and is never deleted. Constraint `ck_<table>__frozen` → `409 INVALID_STATE`.
 - `procurement.guard_frozen_lines(<parent>, <fk>, <columns>)` on every line table (and `supplier_bill_taxes`): while the parent is a DRAFT lines change freely; afterwards no line is added or removed and only the fulfilment counters change (order lines: received/returned/billed quantities; receipt lines: billed, returned and credited quantities and values; requisition lines: ordered quantity).
+
+### 8.5 Sales
+
+- `sales.guard_frozen_document(<columns>)` on every document header (quotations, orders, deliveries, returns, invoices): a DRAFT changes freely and may be deleted; any other header changes only the listed state columns (quotations: `status`, `sales_order_id`, `rejection_reason`; orders: `status`, `invoice_status`, `cancel_reason`, `close_reason`; deliveries, returns and invoices: none) and is never deleted. Constraint `ck_<table>__frozen` → `409 INVALID_STATE`.
+- `sales.guard_frozen_lines(<parent>, <fk>, <columns>)` on every line table (and `invoice_taxes`): while the parent is a DRAFT lines change freely; afterwards no line is added or removed and only the fulfilment fields change (order lines: reservation, reserved, delivered, returned and invoiced quantities; delivery lines: returned quantity; return lines and invoice lines: credited quantity). Fulfilment counters are written before the header leaves DRAFT where both happen in one transaction.
 
 ---
 
@@ -1373,6 +1402,12 @@ System postings (event listeners) use exactly the same sequence inside the publi
 | Post a supplier bill / debit note | Bill header `FOR UPDATE` → its purchase order headers `FOR UPDATE` (ID order) → (debit note: original bill `FOR UPDATE`) → counters → `document_sequences` | The match is re-run under these locks; a second bill of the same receipt sees the first's billed quantity. |
 | Convert a requisition / change a linked order | Requisition `FOR UPDATE` (convert), or order `FOR UPDATE` → linked requisitions `FOR UPDATE` (ID order) | Ordered quantities are recomputed from the live orders; over-ordering a line is refused. |
 | Use a supplier on a new document | Partner row `FOR SHARE` (`PartnersFacade.supplierForUse`) | A concurrent block or deactivation waits, and the document sees the new status. |
+| Use a customer on a new document | Partner row `FOR SHARE` (`PartnersFacade.customerForUse`) | As for suppliers. |
+| Confirm a sales order (Phase 7) | Order header `FOR UPDATE` → partner `FOR SHARE` → `pg_advisory_xact_lock(hashtext('sales.customer_credit'), hashtext(company:customer))` → (Inventory's reservation locks per line) → order line mirrors → `document_sequences` | The advisory lock serializes credit checks of one customer, so two concurrent orders cannot both fit into the same remaining credit. |
+| Post a delivery / receive a sales return | Delivery or return header `FOR UPDATE` → sales order header `FOR UPDATE` → (Inventory's posting locks) → order, delivery line counters → `document_sequences` (stock movement, then document number) | The order lock serializes every delivery, return and invoice of the order (SAL-4, SAL-7). |
+| Post an invoice / credit note | Invoice header `FOR UPDATE` → sales order header `FOR UPDATE` (if any) → (credit note: original invoice `FOR UPDATE`) → counters → `document_sequences` | Invoiceable and creditable quantities are re-checked under these locks (SAL-5, SAL-6). |
+| Cancel or close a sales order | Order header `FOR UPDATE` → (Inventory: release reservations) → draft deliveries (and invoices) `FOR UPDATE` → transition | |
+| Make a price list the default | List `FOR NO KEY UPDATE` → update of the currency's previous default | `uq_price_lists__default` backs it (`409 CONFLICT`). |
 | Payroll run calculate/approve | Run row `FOR UPDATE`; status `CALCULATING` acts as a mutex | |
 | Deactivate a branch, department, position, tax code or payment terms | The row `FOR NO KEY UPDATE` → usage checks (own tables, then the `OrganizationUsage` ports, ADR-034) → update | A new use takes the row `FOR SHARE` first (`OrgFacade.branchForUse` / `departmentForUse`, HR's position lock), so the two serialize and neither sees stale state. |
 | Create or move a department | Department `FOR NO KEY UPDATE` → new parent and branch `FOR SHARE` → trigger: `pg_advisory_xact_lock(hashtext('org.departments'), hashtext(company_id))` | Two crossing moves may deadlock; one is aborted (`409 RESOURCE_BUSY`). Neither order leaves a cycle. |
@@ -1392,6 +1427,7 @@ Deadlock handling: the retry policy in ARCHITECTURE.md §6.2. `lock_timeout = '5
 - Posting during a period close either completes before the close or fails with `PERIOD_CLOSED`.
 - Two system administrators disabling each other concurrently leave exactly one (`UserAdministrationIntegrationTest`, Phase 3).
 - Crossing department moves never form a cycle; concurrent overlapping assignments of one employee leave exactly one (Phase 4).
+- Sales (Phase 7, `SalesConcurrencyIntegrationTest`): concurrent deliveries of one order never over-deliver, a delivery is posted once, two invoices of one order never over-invoice, two credit notes never over-credit, concurrent confirmations respect the credit limit and never reserve more than the stock, a quotation is accepted once.
 - Procurement (Phase 6, `ProcurementConcurrencyIntegrationTest`): concurrent receipts of one order never over-receive, a receipt is posted once, two bills of one receipt never both post, an order is approved once and a requisition converted once.
 - Inventory (Phase 5, `InventoryConcurrencyIntegrationTest`): parallel issues, reserve against issue, crossing transfers, double posting of one draft, concurrent requests with one idempotency key, and gapless numbering under load. After each, the invariant check is clean.
 

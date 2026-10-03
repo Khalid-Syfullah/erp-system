@@ -16,6 +16,7 @@ import com.erp.platform.web.ApiException;
 import com.erp.platform.web.EntityTags;
 import com.erp.platform.web.FieldViolation;
 import com.erp.platform.web.MergePatch;
+import com.erp.platform.web.MergePatchLines;
 import com.erp.platform.web.PlatformErrorCode;
 import com.erp.platform.web.paging.ListQuery;
 import com.erp.platform.web.paging.PageResponse;
@@ -63,15 +64,15 @@ public class PurchaseOrderService {
             "pricesIncludeTax",
             "notes",
             "lines");
-    static final List<LinePatchReader.Member> LINE_MEMBERS = List.of(
-            LinePatchReader.Member.uuid("variantId", true),
-            LinePatchReader.Member.text("description", 300),
-            LinePatchReader.Member.decimal("quantity", true),
-            LinePatchReader.Member.uuid("uomId", true),
-            LinePatchReader.Member.decimal("unitPrice", true),
-            LinePatchReader.Member.decimal("discountPercent", false),
-            LinePatchReader.Member.uuid("taxCodeId", false),
-            LinePatchReader.Member.uuid("requisitionLineId", false));
+    static final List<MergePatchLines.Member> LINE_MEMBERS = List.of(
+            MergePatchLines.Member.uuid("variantId", true),
+            MergePatchLines.Member.text("description", 300),
+            MergePatchLines.Member.decimal("quantity", true),
+            MergePatchLines.Member.uuid("uomId", true),
+            MergePatchLines.Member.decimal("unitPrice", true),
+            MergePatchLines.Member.decimal("discountPercent", false),
+            MergePatchLines.Member.uuid("taxCodeId", false),
+            MergePatchLines.Member.uuid("requisitionLineId", false));
 
     private final PurchaseOrderRepository orders;
     private final ReceiptRepository receipts;
@@ -751,7 +752,7 @@ public class PurchaseOrderService {
     }
 
     static List<ProcurementCommands.OrderLine> readLines(JsonNode array) {
-        return LinePatchReader.read(array, LINE_MEMBERS).stream()
+        return MergePatchLines.read(array, LINE_MEMBERS).stream()
                 .map(v -> new ProcurementCommands.OrderLine(
                         v.uuid("variantId"),
                         v.text("description"),

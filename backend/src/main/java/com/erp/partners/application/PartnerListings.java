@@ -32,6 +32,17 @@ public final class PartnerListings {
             .searchable()
             .build();
 
+    public static final ListDefinition CUSTOMERS = ListDefinition.builder("partners.customers")
+            .sortable("code", "name", "createdAt")
+            .defaultSort(SortOrder.asc("code"))
+            .filter("code", ValueType.STRING, EQ, IN, LIKE)
+            .enumFilter("status", Set.of("ACTIVE", "INACTIVE", "BLOCKED"), EQ, IN)
+            .filter("customerGroupId", ValueType.UUID, EQ, IN)
+            .filter("currencyCode", ValueType.STRING, EQ, IN)
+            .filter("isOnHold", ValueType.BOOLEAN, EQ)
+            .searchable()
+            .build();
+
     public static final ListDefinition GROUPS = ListDefinition.builder("partners.partner_groups")
             .sortable("code", "name")
             .defaultSort(SortOrder.asc("code"))

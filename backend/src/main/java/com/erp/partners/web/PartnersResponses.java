@@ -31,9 +31,11 @@ final class PartnersResponses {
             String status,
             @Nullable String notes,
             boolean isSupplier,
+            boolean isCustomer,
             @Nullable List<Address> addresses,
             @Nullable List<Contact> contacts,
             @Nullable Supplier supplierProfile,
+            @Nullable Customer customerProfile,
             OffsetDateTime createdAt,
             OffsetDateTime updatedAt,
             int version) {
@@ -52,6 +54,8 @@ final class PartnersResponses {
                     p.status(),
                     p.notes(),
                     p.isSupplier(),
+                    p.isCustomer(),
+                    null,
                     null,
                     null,
                     null,
@@ -75,9 +79,11 @@ final class PartnersResponses {
                     p.status(),
                     p.notes(),
                     p.isSupplier(),
+                    p.isCustomer(),
                     d.addresses().stream().map(Address::from).toList(),
                     d.contacts().stream().map(Contact::from).toList(),
                     d.supplier() == null ? null : Supplier.from(d.supplier()),
+                    d.customer() == null ? null : Customer.from(d.customer()),
                     p.createdAt(),
                     p.updatedAt(),
                     p.version());
@@ -173,6 +179,45 @@ final class PartnersResponses {
                     s.leadTimeDays(),
                     s.updatedAt(),
                     s.version());
+        }
+    }
+
+    record Customer(
+            UUID partnerId,
+            @Nullable UUID customerGroupId,
+            String currencyCode,
+            @Nullable UUID paymentTermsId,
+            @Nullable UUID defaultTaxCodeId,
+            java.math.@Nullable BigDecimal creditLimit,
+            boolean isOnHold,
+            OffsetDateTime updatedAt,
+            int version) {
+        static Customer from(PartnerViews.Customer c) {
+            return new Customer(
+                    c.partnerId(),
+                    c.customerGroupId(),
+                    c.currencyCode(),
+                    c.paymentTermsId(),
+                    c.defaultTaxCodeId(),
+                    c.creditLimit(),
+                    c.onHold(),
+                    c.updatedAt(),
+                    c.version());
+        }
+    }
+
+    /** A row of {@code GET {c}/customers}. */
+    record CustomerRow(
+            UUID id,
+            String code,
+            String name,
+            String status,
+            @Nullable String taxRegistrationNo,
+            Customer profile) {
+        static CustomerRow from(PartnerViews.CustomerListItem item) {
+            PartnerViews.Partner p = item.partner();
+            return new CustomerRow(
+                    p.id(), p.code(), p.name(), p.status(), p.taxRegistrationNo(), Customer.from(item.customer()));
         }
     }
 
