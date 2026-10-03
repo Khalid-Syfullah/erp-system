@@ -331,6 +331,13 @@ stateDiagram-v2
 
 `billing_status` is tracked separately: `NOT_BILLED → PARTIALLY_BILLED → BILLED`.
 
+Clarifications (ADR-036):
+
+- Receipt progress follows the stockable lines' net received quantity (received − returned). A purchase return can therefore move an order back from `RECEIVED` to `PARTIALLY_RECEIVED`, and the returned quantity can be received again.
+- An order without stockable lines has nothing to receive. It closes from `APPROVED`, manually or when fully billed.
+- `CLOSED` orders take no more receipts. Bills and debit notes against them can still be posted.
+- Cancelling or closing an order cancels its draft receipts. Cancelling frees the requisition quantities it was converted from.
+
 Approved POs are not editable. To change one, cancel it (if nothing was received) or close it short and create a new PO. *PO revisions/amendments are a future feature.*
 
 **Goods receipt / purchase return:** `DRAFT → POSTED`, or `DRAFT → CANCELLED`. A posted receipt is corrected by a purchase return.

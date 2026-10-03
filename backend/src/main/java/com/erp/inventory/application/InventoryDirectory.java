@@ -5,6 +5,7 @@ import com.erp.inventory.domain.MovementType;
 import com.erp.inventory.domain.UomConversion;
 import com.erp.inventory.persistence.MovementRepository;
 import com.erp.inventory.persistence.ProductRepository;
+import com.erp.inventory.persistence.ReferenceRepository;
 import com.erp.inventory.persistence.ReservationRepository;
 import com.erp.inventory.persistence.StockRepository;
 import com.erp.inventory.persistence.UomRepository;
@@ -38,6 +39,7 @@ class InventoryDirectory implements InventoryFacade {
     private final ReservationRepository reservations;
     private final MovementLineResolver resolver;
     private final PostingEngine engine;
+    private final ReferenceRepository references;
     private final AuditPort audit;
 
     InventoryDirectory(
@@ -50,6 +52,7 @@ class InventoryDirectory implements InventoryFacade {
             ReservationRepository reservations,
             MovementLineResolver resolver,
             PostingEngine engine,
+            ReferenceRepository references,
             AuditPort audit) {
         this.movements = movements;
         this.warehouses = warehouses;
@@ -60,6 +63,7 @@ class InventoryDirectory implements InventoryFacade {
         this.reservations = reservations;
         this.resolver = resolver;
         this.engine = engine;
+        this.references = references;
         this.audit = audit;
     }
 
@@ -182,18 +186,22 @@ class InventoryDirectory implements InventoryFacade {
         movements.insertLines(companyId, id, resolved, actor);
         PostingEngine.Result result =
                 engine.post(movements.lockForChange(companyId, id).orElseThrow());
-        return new PostedMovement(
-                id,
-                result.number(),
-                result.lines().stream()
-                        .map(l -> new PostedLine(
-                                l.lineId(),
-                                l.sourceLineId(),
-                                l.variantId(),
-                                l.quantityBase(),
-                                l.unitCostBase(),
-                                l.valueBase()))
-                        .toList());
+        // One posted line per request line, in order (receipts and issues have one location each).
+        List<PostedLine> posted = new java.util.ArrayList<>();
+        for (int i = 0; i < result.lines().size(); i++) {
+            var l = result.lines().get(i);
+            InventoryCommands.Line requested = lines.get(i);
+            UUID location = requested.toLocationId() != null ? requested.toLocationId() : requested.fromLocationId();
+            posted.add(new PostedLine(
+                    l.lineId(),
+                    l.sourceLineId(),
+                    l.variantId(),
+                    java.util.Objects.requireNonNull(location),
+                    l.quantityBase(),
+                    l.unitCostBase(),
+                    l.valueBase()));
+        }
+        return new PostedMovement(id, result.number(), List.copyOf(posted));
     }
 
     // ----------------------------------------------------------------------- reservations
@@ -382,6 +390,23 @@ class InventoryDirectory implements InventoryFacade {
                                 p.sellable(),
                                 p.salesTaxCodeId(),
                                 p.purchaseTaxCodeId())));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<WarehouseInfo> warehouse(UUID warehouseId) {
+        return warehouses
+                .find(CurrentContext.requireCompany(), warehouseId, null)
+                .map(w -> new WarehouseInfo(w.id(), w.code(), w.name(), w.branchId(), w.active()));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public BigDecimal overReceiptTolerancePercent() {
+        return references
+                .settings(CurrentContext.requireCompany())
+                .map(InventoryViews.Settings::overReceiptTolerancePercent)
+                .orElse(InventoryReferenceService.DEFAULTS.overReceiptTolerancePercent());
     }
 
     private UUID defaultLocation(UUID companyId, UUID warehouseId) {

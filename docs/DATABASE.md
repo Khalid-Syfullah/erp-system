@@ -460,7 +460,7 @@ auth.throttle_events (id, action text NOT NULL, subject_hash bytea NOT NULL, occ
 
 ```sql
 partners.partner_groups (id, company_id C, code, name, applies_to text CHECK (IN ('CUSTOMER','SUPPLIER')), is_active, + std,
-  UNIQUE (company_id, applies_to, code))
+  UNIQUE (company_id, applies_to, code), UNIQUE (company_id, id, applies_to))   -- the latter is the target of typed FKs
 
 partners.partners (id, company_id C, code text NOT NULL, name text NOT NULL, legal_name text NULL,
   partner_type text NOT NULL CHECK (IN ('ORGANIZATION','INDIVIDUAL')),
@@ -479,6 +479,8 @@ partners.partner_contacts (id, company_id, partner_id, name, email, phone, role_
 partners.partner_bank_accounts (id, company_id, partner_id, bank_name, account_holder,
   account_number_encrypted bytea, iban_encrypted bytea NULL, swift_bic text NULL, last4 char(4), key_version smallint,
   currency_code char(3) NULL, is_default boolean, + std)
+  -- FieldEncryptor (AES-256-GCM), associated data 'partners.partner_bank_accounts.<column>:<id>'; partial unique default per partner.
+  -- Accounts are added or removed, never edited (every change is visible in the audit log).
 
 partners.customers (partner_id uuid PK, company_id NOT NULL, FK (company_id, partner_id) → partners,
   customer_group_id uuid NULL → partner_groups,           -- must be applies_to CUSTOMER (trigger/app)
@@ -490,8 +492,12 @@ partners.customers (partner_id uuid PK, company_id NOT NULL, FK (company_id, par
   + std (id omitted), UNIQUE (company_id, partner_id))
 
 partners.suppliers (partner_id uuid PK, company_id, FK → partners,
-  supplier_group_id NULL → partner_groups, currency_code NOT NULL, payment_terms_id NULL, default_tax_code_id NULL,
-  lead_time_days integer NULL CHECK (>= 0), + std, UNIQUE (company_id, partner_id))
+  supplier_group_id NULL → partner_groups,
+  group_applies_to text GENERATED ALWAYS AS ('SUPPLIER') STORED,   -- FK (company_id, supplier_group_id, group_applies_to)
+                                                                  -- → partner_groups (company_id, id, applies_to): supplier groups only
+  currency_code NOT NULL, payment_terms_id NULL, default_tax_code_id NULL,
+  lead_time_days integer NULL CHECK (BETWEEN 0 AND 3650), + std, UNIQUE (company_id, partner_id))
+-- partners.customers (above) is created with Sales in Phase 7 (ADR-036).
 ```
 
 ### 5.5 `inventory`
@@ -588,7 +594,7 @@ inventory.stock_movements (id, company_id C, number text NULL,      -- assigned 
   status text NOT NULL CHECK (IN ('DRAFT','POSTED','CANCELLED')),
   movement_date date NOT NULL,                                       -- accounting date for valuation
   warehouse_id uuid NOT NULL → warehouses, dest_warehouse_id uuid NULL → warehouses,
-  partner_id uuid NULL,                     -- → partners.partners once Partners exists (Phase 6, ADR-035); validated by the calling module
+  partner_id uuid NULL,                     -- owned by Partners; no FK (both modules are L2, §6); validated by the calling module
   reason_code_id uuid NULL → reason_codes,
   source_module text NULL, source_type text NULL, source_id uuid NULL, source_number text NULL,
   reversal_of_id uuid NULL → stock_movements UNIQUE,
@@ -695,15 +701,19 @@ erDiagram
 procurement.settings (company_id PK, po_approval_threshold_base numeric(19,4) NULL,   -- POs above require procurement.purchase_order.approve_high
   price_match_tolerance_percent numeric(7,4) NOT NULL DEFAULT 0,
   qty_match_tolerance_percent   numeric(7,4) NOT NULL DEFAULT 0,
-  require_receipt_before_bill boolean NOT NULL DEFAULT true, + std)
+  require_receipt_before_bill boolean NOT NULL DEFAULT true CHECK (= true),   -- v1: stockable goods are billed from receipts (ADR-036)
+  + std)
 
 procurement.purchase_requisitions (id, company_id C, number NULL, branch_id → org.branches, department_id NULL → org.departments,
   requested_by uuid NOT NULL, needed_by date NULL,
   status CHECK (IN ('DRAFT','SUBMITTED','APPROVED','REJECTED','PARTIALLY_ORDERED','ORDERED','CANCELLED')),
-  approved_by uuid NULL, approved_at timestamptz NULL, notes, + std, UNIQUE (company_id, number))
+  submitted_by, submitted_at, approved_by uuid NULL, approved_at timestamptz NULL, rejection_reason, cancel_reason, notes, + std,
+  UNIQUE (company_id, number))                          -- numbered on submit
 procurement.purchase_requisition_lines (id, company_id, requisition_id, line_no, variant_id → inventory.product_variants,
-  quantity numeric(18,6) CHECK (> 0), uom_id, estimated_unit_price numeric(19,6) NULL, suggested_supplier_id NULL → partners.suppliers,
-  ordered_quantity numeric(18,6) NOT NULL DEFAULT 0, + std)
+  description, quantity numeric(18,6) CHECK (> 0), uom_id, quantity_base numeric(18,6) CHECK (> 0),
+  estimated_unit_price numeric(19,6) NULL, suggested_supplier_id NULL → partners.suppliers,
+  ordered_quantity_base numeric(18,6) NOT NULL DEFAULT 0 CHECK (BETWEEN 0 AND quantity_base), + std)
+  -- ordered_quantity_base = Σ quantity_base of the lines of live (not cancelled) POs linked to it, recomputed by the service
 
 procurement.purchase_orders (id, company_id C, number text NULL,   -- assigned on submit
   supplier_id NOT NULL → partners.suppliers, branch_id → org.branches, warehouse_id → inventory.warehouses,
@@ -713,12 +723,14 @@ procurement.purchase_orders (id, company_id C, number text NULL,   -- assigned o
   status text NOT NULL CHECK (IN ('DRAFT','PENDING_APPROVAL','APPROVED','PARTIALLY_RECEIVED','RECEIVED','CLOSED','CANCELLED')),
   billing_status text NOT NULL DEFAULT 'NOT_BILLED' CHECK (IN ('NOT_BILLED','PARTIALLY_BILLED','BILLED')),
   subtotal numeric(19,4) NOT NULL DEFAULT 0, tax_total numeric(19,4) NOT NULL DEFAULT 0, total numeric(19,4) NOT NULL DEFAULT 0,
-  submitted_by, submitted_at, approved_by, approved_at, cancelled_reason text NULL, notes, + std,
+  department_id NULL → org.departments,
+  submitted_by, submitted_at, approved_by, approved_at, rejection_reason, cancel_reason, close_reason, notes, + std,
   UNIQUE (company_id, number), CHECK (total = subtotal + tax_total))
   -- ix (company_id, supplier_id, order_date DESC); ix (company_id, status)
 
 procurement.purchase_order_lines (id, company_id, purchase_order_id ON DELETE CASCADE (draft), line_no,
   variant_id NOT NULL → inventory.product_variants, description text NOT NULL,
+  is_stockable boolean NOT NULL,                 -- product type snapshot (G-10): only stockable lines are received
   quantity numeric(18,6) CHECK (> 0), uom_id → inventory.uoms, quantity_base numeric(18,6) CHECK (> 0),
   unit_price numeric(19,6) CHECK (>= 0), discount_percent numeric(7,4) NOT NULL DEFAULT 0 CHECK (BETWEEN 0 AND 100),
   tax_code_id NULL → org.tax_codes,
@@ -731,25 +743,34 @@ procurement.purchase_order_lines (id, company_id, purchase_order_id ON DELETE CA
   CHECK (returned_quantity_base <= received_quantity_base))
 
 procurement.goods_receipts (id, company_id C, number NULL, purchase_order_id → purchase_orders, supplier_id,
-  warehouse_id, receipt_date date NOT NULL, status CHECK (IN ('DRAFT','POSTED','CANCELLED')),
-  exchange_rate numeric(19,10) NOT NULL DEFAULT 1 CHECK (> 0),        -- PO currency → base at receipt_date
+  branch_id, warehouse_id, receipt_date date NOT NULL, status CHECK (IN ('DRAFT','POSTED','CANCELLED')),
+  currency_code char(3) NOT NULL,                                     -- the PO's
+  exchange_rate numeric(19,10) NULL CHECK (> 0),                      -- PO currency → base at receipt_date, fixed at posting
+  -- CHECK (status = 'POSTED') = (number, stock_movement_id, exchange_rate, posted_at all NOT NULL)
   stock_movement_id uuid NULL → inventory.stock_movements UNIQUE,
   supplier_delivery_note text NULL, posted_at, posted_by, + std, UNIQUE (company_id, number))
 procurement.goods_receipt_lines (id, company_id, goods_receipt_id, line_no, purchase_order_line_id → purchase_order_lines,
-  variant_id, location_id → inventory.locations, quantity CHECK (> 0), uom_id, quantity_base CHECK (> 0),
-  unit_cost_doc numeric(19,6) NOT NULL, unit_cost_base numeric(19,6) NOT NULL, value_base numeric(19,4) NOT NULL,
-  billed_quantity_base numeric(18,6) NOT NULL DEFAULT 0, returned_quantity_base numeric(18,6) NOT NULL DEFAULT 0, + std)
+  variant_id, location_id NULL → inventory.locations,                -- NULL in a draft: the warehouse's default stock location
+  quantity CHECK (> 0), uom_id, quantity_base CHECK (> 0),
+  unit_cost_doc numeric(19,6) NOT NULL,                               -- PO net unit price per base unit (PRC-2)
+  unit_cost_base numeric(19,6) NULL, value_base numeric(19,4) NULL,   -- set at posting (the ledger's value)
+  billed_quantity_base, billed_value_base, returned_quantity_base, returned_value_base,
+  credited_quantity_base, credited_value_base NOT NULL DEFAULT 0, + std,
+  CHECK (returned ≤ quantity, credited ≤ returned, credited ≤ billed, credited value ≤ billed value))
+  -- billed may exceed the receipt within the quantity tolerance (PRC-3); the receipt value cleared never does
 
-procurement.purchase_returns (id, company_id C, number, supplier_id, goods_receipt_id → goods_receipts, warehouse_id,
-  return_date, status CHECK (IN ('DRAFT','POSTED','CANCELLED')), reason text NOT NULL,
-  stock_movement_id NULL UNIQUE → inventory.stock_movements, + std)
-procurement.purchase_return_lines (id, company_id, purchase_return_id, line_no, goods_receipt_line_id, variant_id, location_id,
-  quantity, uom_id, quantity_base CHECK (> 0), + std)
+procurement.purchase_returns (id, company_id C, number, supplier_id, purchase_order_id, goods_receipt_id → goods_receipts,
+  branch_id, warehouse_id, return_date, status CHECK (IN ('DRAFT','POSTED','CANCELLED')), reason text NOT NULL,
+  stock_movement_id NULL UNIQUE → inventory.stock_movements, posted_at, posted_by, + std)
+procurement.purchase_return_lines (id, company_id, purchase_return_id, line_no, goods_receipt_line_id, variant_id, location_id NULL,
+  quantity, uom_id, quantity_base CHECK (> 0),
+  unit_cost_base numeric(19,6) NOT NULL,     -- the receipt's unit cost (GRNI reference value)
+  value_base numeric(19,4) NULL, + std)      -- round(quantity_base × unit_cost_base), set at posting
 
 procurement.supplier_bills (id, company_id C,
   document_type text NOT NULL CHECK (IN ('BILL','DEBIT_NOTE')),
   number text NULL,                                           -- internal number at posting
-  supplier_invoice_number text NOT NULL,                      -- supplier's reference
+  supplier_invoice_number citext NOT NULL,                    -- supplier's reference
   supplier_id → partners.suppliers, purchase_order_id NULL → purchase_orders,
   original_bill_id NULL → supplier_bills,                     -- DEBIT_NOTE → BILL
   bill_date date NOT NULL, accounting_date date NOT NULL, due_date date NOT NULL,
@@ -763,19 +784,20 @@ procurement.supplier_bills (id, company_id C,
   subtotal_base, tax_total_base, total_base numeric(19,4) NOT NULL,
   posted_at, posted_by, + std,
   UNIQUE (company_id, number),
-  UNIQUE (company_id, supplier_id, document_type, supplier_invoice_number),   -- duplicate bill detection
-  CHECK (document_type = 'BILL' OR original_bill_id IS NOT NULL),
+  -- partial unique (company_id, supplier_id, document_type, supplier_invoice_number) WHERE status <> 'CANCELLED' (PRC-5)
+  CHECK ((document_type = 'DEBIT_NOTE') = (original_bill_id IS NOT NULL)),
+  CHECK (status <> 'POSTED' OR match_status IN ('MATCHED','OVERRIDDEN')),
   CHECK (total = subtotal + tax_total), CHECK (due_date >= bill_date))
 procurement.supplier_bill_lines (id, company_id, supplier_bill_id, line_no,
   line_kind text CHECK (IN ('RECEIVED_STOCK','SERVICE','NON_STOCK_GOODS')),
   purchase_order_line_id NULL, goods_receipt_line_id NULL,
   variant_id NOT NULL, description, quantity CHECK (> 0), uom_id, quantity_base CHECK (> 0),
   unit_price numeric(19,6) CHECK (>= 0), discount_percent, tax_code_id NULL,
-  net_amount, tax_amount, total_amount numeric(19,4), net_amount_base numeric(19,4),
+  net_amount, tax_amount, total_amount numeric(19,4), net_amount_base numeric(19,4), tax_amount_base numeric(19,4),
   receipt_value_base numeric(19,4) NULL,    -- value at receipt for RECEIVED_STOCK (GRNI clearing)
   branch_id NULL, department_id NULL, + std,
   CHECK (line_kind <> 'RECEIVED_STOCK' OR (goods_receipt_line_id IS NOT NULL AND receipt_value_base IS NOT NULL)))
-procurement.supplier_bill_taxes (supplier_bill_id, tax_code_id, company_id, taxable_amount, tax_amount, taxable_amount_base, tax_amount_base,
+procurement.supplier_bill_taxes (supplier_bill_id, tax_code_id, company_id, rate_percent, taxable_amount, tax_amount, taxable_amount_base, tax_amount_base,
   PRIMARY KEY (supplier_bill_id, tax_code_id))
 ```
 
@@ -1319,10 +1341,15 @@ System postings (event listeners) use exactly the same sequence inside the publi
 ### 8.3 Generic
 
 - `platform.guard_draft_only_delete()`: attached to every document header. It rejects `DELETE` unless `OLD.status = 'DRAFT'`.
-- `platform.guard_posted_document()`: attached to `sales.invoices`, `procurement.supplier_bills`, `accounting.payments`, `accounting.expenses` and `payroll.payroll_runs`. It rejects changes to financial columns once `status` is in the module's "posted" set. The allowed transitions are `payments POSTED→VOIDED`, `expenses POSTED→REVERSED` and `payroll_runs POSTED→PAID`.
+- `platform.guard_posted_document()`: attached to `sales.invoices`, `accounting.payments`, `accounting.expenses` and `payroll.payroll_runs`. (Procurement's documents, `supplier_bills` included, use the stricter guards of §8.4.) It rejects changes to financial columns once `status` is in the module's "posted" set. The allowed transitions are `payments POSTED→VOIDED`, `expenses POSTED→REVERSED` and `payroll_runs POSTED→PAID`.
 - `admin.guard_audit_append_only()` on `admin.audit_log`.
 - `org.guard_company_base_currency()`: blocks a change of `base_currency` once the company has a posted journal entry. Because org must not read accounting tables, this is **checked in the application** through `AccountingFacade.hasPostings(companyId)`, exposed to org through a port that Accounting implements. The trigger version is intentionally not used, to respect boundaries.
 - Tree cycle guards (`org.departments` since Phase 4; `accounting.accounts`, `inventory.product_categories`, `inventory.locations` later). Each walks the ancestors of the new parent after taking a per-company advisory lock, and raises `check_violation` with the constraint name `ck_<table>__no_cycle`.
+
+### 8.4 Procurement
+
+- `procurement.guard_frozen_document(<columns>)` on every document header (requisitions, orders, receipts, returns, bills): a DRAFT changes freely and may be deleted; any other header changes only the listed state columns (orders: `status`, `billing_status`, approval and reason columns; requisitions: `status`, approval and reasons; receipts, returns and bills: none) and is never deleted. Constraint `ck_<table>__frozen` → `409 INVALID_STATE`.
+- `procurement.guard_frozen_lines(<parent>, <fk>, <columns>)` on every line table (and `supplier_bill_taxes`): while the parent is a DRAFT lines change freely; afterwards no line is added or removed and only the fulfilment counters change (order lines: received/returned/billed quantities; receipt lines: billed, returned and credited quantities and values; requisition lines: ordered quantity).
 
 ---
 
@@ -1342,6 +1369,10 @@ System postings (event listeners) use exactly the same sequence inside the publi
 | Allocate payment | `open_items` `FOR UPDATE` (ordered by id) → payment `FOR UPDATE` | |
 | Edit draft document | Optimistic version check | Concurrent edits get 409. |
 | Fulfil order line (delivery / receipt / invoice) | Order header `FOR UPDATE` (serializes fulfilment per order) → lines | Prevents two deliveries from over-delivering the same line. |
+| Post a goods receipt / purchase return (Phase 6) | Receipt or return header `FOR UPDATE` → purchase order header `FOR UPDATE` → (Inventory's posting locks, §9 above) → order and receipt line counters → `document_sequences` (stock movement, then receipt or return number) | The order lock serializes all receipts, returns and bills of one order, so open quantities are read and written by one transaction at a time. |
+| Post a supplier bill / debit note | Bill header `FOR UPDATE` → its purchase order headers `FOR UPDATE` (ID order) → (debit note: original bill `FOR UPDATE`) → counters → `document_sequences` | The match is re-run under these locks; a second bill of the same receipt sees the first's billed quantity. |
+| Convert a requisition / change a linked order | Requisition `FOR UPDATE` (convert), or order `FOR UPDATE` → linked requisitions `FOR UPDATE` (ID order) | Ordered quantities are recomputed from the live orders; over-ordering a line is refused. |
+| Use a supplier on a new document | Partner row `FOR SHARE` (`PartnersFacade.supplierForUse`) | A concurrent block or deactivation waits, and the document sees the new status. |
 | Payroll run calculate/approve | Run row `FOR UPDATE`; status `CALCULATING` acts as a mutex | |
 | Deactivate a branch, department, position, tax code or payment terms | The row `FOR NO KEY UPDATE` → usage checks (own tables, then the `OrganizationUsage` ports, ADR-034) → update | A new use takes the row `FOR SHARE` first (`OrgFacade.branchForUse` / `departmentForUse`, HR's position lock), so the two serialize and neither sees stale state. |
 | Create or move a department | Department `FOR NO KEY UPDATE` → new parent and branch `FOR SHARE` → trigger: `pg_advisory_xact_lock(hashtext('org.departments'), hashtext(company_id))` | Two crossing moves may deadlock; one is aborted (`409 RESOURCE_BUSY`). Neither order leaves a cycle. |
@@ -1361,6 +1392,7 @@ Deadlock handling: the retry policy in ARCHITECTURE.md §6.2. `lock_timeout = '5
 - Posting during a period close either completes before the close or fails with `PERIOD_CLOSED`.
 - Two system administrators disabling each other concurrently leave exactly one (`UserAdministrationIntegrationTest`, Phase 3).
 - Crossing department moves never form a cycle; concurrent overlapping assignments of one employee leave exactly one (Phase 4).
+- Procurement (Phase 6, `ProcurementConcurrencyIntegrationTest`): concurrent receipts of one order never over-receive, a receipt is posted once, two bills of one receipt never both post, an order is approved once and a requisition converted once.
 - Inventory (Phase 5, `InventoryConcurrencyIntegrationTest`): parallel issues, reserve against issue, crossing transfers, double posting of one draft, concurrent requests with one idempotency key, and gapless numbering under load. After each, the invariant check is clean.
 
 ---

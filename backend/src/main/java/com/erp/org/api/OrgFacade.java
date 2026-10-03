@@ -32,4 +32,16 @@ public interface OrgFacade {
 
     /** Branches of the company by ID (unknown IDs are skipped). */
     java.util.Map<UUID, BranchSummary> branches(UUID companyId, Collection<UUID> branchIds);
+
+    /**
+     * The exchange rate (1 unit of the currency = rate × base currency) for a document date: the latest
+     * rate on or before it (G-13); {@code 1} for the base currency; empty when no rate exists.
+     */
+    Optional<java.math.BigDecimal> exchangeRate(UUID companyId, String currencyCode, java.time.LocalDate date);
+
+    Optional<CurrencyInfo> currency(String currencyCode);
+
+    Optional<PaymentTermsSummary> paymentTerms(UUID companyId, UUID paymentTermsId);
+
+    boolean countryExists(String countryCode);
 }

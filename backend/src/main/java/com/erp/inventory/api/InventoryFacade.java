@@ -41,6 +41,12 @@ public interface InventoryFacade {
 
     Optional<VariantInfo> variantInfo(UUID variantId);
 
+    /** A warehouse of the company (any status), regardless of the caller's branch scope. */
+    Optional<WarehouseInfo> warehouse(UUID warehouseId);
+
+    /** Company setting: receipts may exceed the open quantity by this percentage (PRC-1). */
+    BigDecimal overReceiptTolerancePercent();
+
     /** The originating document. */
     record SourceRef(
             String module, String type, UUID id, @Nullable String number) {}
@@ -85,11 +91,16 @@ public interface InventoryFacade {
 
     record PostedMovement(UUID movementId, String number, List<PostedLine> lines) {}
 
-    /** Valued result of one line; outbound values come from the moving average (INV-4). */
+    /**
+     * Valued result of one line; outbound values come from the moving average (INV-4).
+     *
+     * @param locationId where the stock went in or came from
+     */
     record PostedLine(
             UUID lineId,
             @Nullable UUID sourceLineId,
             UUID variantId,
+            UUID locationId,
             BigDecimal quantityBase,
             BigDecimal unitCostBase,
             BigDecimal valueBase) {}
@@ -124,4 +135,6 @@ public interface InventoryFacade {
             boolean sellable,
             @Nullable UUID salesTaxCodeId,
             @Nullable UUID purchaseTaxCodeId) {}
+
+    record WarehouseInfo(UUID id, String code, String name, UUID branchId, boolean active) {}
 }

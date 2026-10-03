@@ -20,7 +20,8 @@ import org.springframework.test.context.DynamicPropertySource;
     AuthTestSupport.class,
     OrgFixtures.class,
     TestTaxCodeUsage.class,
-    InventoryFixtures.class
+    InventoryFixtures.class,
+    ProcurementFixtures.class
 })
 public abstract class IntegrationTest {
 

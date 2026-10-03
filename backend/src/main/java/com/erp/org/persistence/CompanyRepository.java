@@ -7,6 +7,7 @@ import static com.erp.db.org.Tables.CURRENCIES;
 import com.erp.db.org.tables.records.CompaniesRecord;
 import com.erp.org.api.CompanyProfile;
 import com.erp.org.api.CompanySummary;
+import com.erp.org.api.CurrencyInfo;
 import com.erp.org.application.CompanyCommands;
 import com.erp.org.application.CompanyView;
 import com.erp.org.application.OrgListings;
@@ -125,6 +126,7 @@ public class CompanyRepository {
                         COMPANIES.BASE_CURRENCY,
                         CURRENCIES.MINOR_UNITS,
                         COMPANIES.ROUNDING_MODE,
+                        COMPANIES.TAX_ROUNDING,
                         COMPANIES.FISCAL_YEAR_START_MONTH,
                         COMPANIES.TIMEZONE,
                         COMPANIES.STATUS)
@@ -139,7 +141,8 @@ public class CompanyRepository {
                         r.value4(),
                         r.value5(),
                         r.value6(),
-                        "ACTIVE".equals(r.value7())));
+                        r.value7(),
+                        "ACTIVE".equals(r.value8())));
     }
 
     public List<UUID> allIds() {
@@ -148,6 +151,12 @@ public class CompanyRepository {
 
     public boolean countryExists(String code) {
         return dsl.fetchExists(COUNTRIES, COUNTRIES.CODE.eq(code));
+    }
+
+    public Optional<CurrencyInfo> currency(String code) {
+        return dsl.selectFrom(CURRENCIES)
+                .where(CURRENCIES.CODE.eq(code))
+                .fetchOptional(r -> new CurrencyInfo(r.getCode(), r.getMinorUnits(), r.getIsActive()));
     }
 
     public boolean activeCurrencyExists(String code) {

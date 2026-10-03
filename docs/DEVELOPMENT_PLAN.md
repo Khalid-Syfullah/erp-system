@@ -32,7 +32,7 @@ flowchart LR
 | 3 | Authentication and RBAC | 2 | L (done) |
 | 4 | Organization management (incl. HR organizational slice) | 3 | M (done) |
 | 5 | Inventory | 4 | XL (done) |
-| 6 | Procurement | 5 | L |
+| 6 | Procurement (incl. Partners) | 5 | L (done) |
 | 7 | Sales | 5, 6 (patterns) | L |
 | 8 | Accounting | 4–7 (events) | XL |
 | 9 | HR and Payroll | 3, 4, 8 | L |
@@ -425,32 +425,85 @@ A phase is done only when **all** of the following hold:
 |---|---|---|
 | Event Publication Registry, `processed_events`, the `org.company.created` seeding pipeline | Phase 6 | The first asynchronous listener (notifications on `procurement.goods_receipt.posted`) |
 | Opening-stock CSV import | Phase 6 | The CSV import framework |
-| `stock_movements.partner_id` foreign key | Phase 6 | The Partners module |
 | `v_rpt_*` inventory views | Phase 10 | Reporting |
 | Location freeze during counts (optional part of INV-8) | Not planned | — (differences are computed at posting) |
 
-### Phase 6 — Procurement
+### Phase 6 — Procurement ✅
 
 **Prerequisites:** Phase 5.
 
-**Deliverables:**
+**Scope** (ADR-036): the Phase 6 brief (suppliers, requisitions, orders, receipts, bills) on the documented workflow, the Partners module's supplier side, and the Org API pieces documents need. No accounting entries: Accounting books from the published events in Phase 8.
 
-- Carried over from Phase 5 (ADR-035): the Event Publication Registry with `processed_events` and the `org.company.created` seeding pipeline (with the first asynchronous listener), opening-stock CSV import on the CSV framework, and the foreign key from `inventory.stock_movements.partner_id` to partners.
-- Carried over from Phase 4 (ADR-033): **Partners** (partners, addresses, contacts, encrypted bank accounts with masking, reveal and change notification, customer and supplier profiles, partner groups, `pg_trgm` search), the CSV import framework (dry-run, per-row errors) used for partners, and the S3 file port with MinIO in compose.
-- Procurement settings.
-- Requisitions (approval with SoD, conversion to POs).
-- **POs:** pricing, tax computation through Org tax codes and the rounding rules (PRODUCT_SPEC.md G-14), approval thresholds, the state machine, PDF render (async), and optional email to the supplier.
-- Goods receipts, through `InventoryFacade.receive`, with over-receipt tolerance and exchange rate at the receipt date.
-- Purchase returns.
-- **Supplier bills and debit notes:** from receipts or direct, three-way match with tolerances and override, duplicate supplier invoice detection, totals in document and base currency, `supplier_bill_taxes`.
-- Publish `procurement.supplier_bill.posted` / `debit_note.posted` and `goods_receipt.posted` / `purchase_order.approved`, with contract tests.
-- `InvoiceSettlementPort`-style port definitions for bill settlement, implemented in Phase 8 with a default of "unknown" until then.
-- Reporting views.
+**Delivered:**
 
-**Exit criteria:**
+1. **Partners** (new module):
+   - partners with status (`ACTIVE`/`INACTIVE`/`BLOCKED`), search and filters
+   - addresses and contacts (one default each)
+   - partner groups
+   - field-encrypted bank accounts: masked, reveal with step-up and audit
+   - supplier profiles (group typed to suppliers, currency, terms, default tax code, lead time)
+   - `PartnersFacade` (`supplierForUse` locks the partner `FOR SHARE`)
+2. **Org API:**
+   - exchange-rate lookup, currencies, payment terms with due dates, countries
+   - tax code rate and validity, tax rounding
+   - the `TaxCalculator` port (G-14: per line or per document, exclusive or inclusive prices)
+3. **Procurement settings:** approval threshold, match tolerances.
+4. **Requisitions:**
+   - create, edit, submit (numbered), approve (SoD), reject, cancel
+   - conversion of lines into draft orders, with ordered quantities derived from live orders (over-ordering refused; cancelled orders free their quantity)
+5. **Purchase orders:**
+   - server pricing and taxes, defaults from the supplier
+   - submit (numbered), approve (SoD, `approve_high` above the threshold, event `purchase_order.approved`), reject back to draft, cancel (only while nothing is received or billed), close
+   - receipt and billing progress, auto-close when received and billed
+6. **Goods receipts:**
+   - drafts from the order (all open quantities by default)
+   - posting through `InventoryFacade.receive` at the net price and the receipt-date rate, within the over-receipt tolerance, under the order lock
+   - event `goods_receipt.posted`
+7. **Purchase returns:** out through `returnToSupplier` at the receipt cost as the GRNI reference; the order goes back to receivable.
+8. **Supplier bills and debit notes:**
+   - from receipts (prefill), order lines (services) or direct (services, `create_direct`)
+   - base amounts per line and a tax summary
+   - duplicate invoice detection
+   - three-way match with tolerances, override with reason, re-checked at posting
+   - exact GRNI clearing through receipt-line counters
+   - debit notes for returned goods or services, limited to what is left of the bill
+   - events `supplier_bill.posted` / `debit_note.posted`
+   - settlement through `BillSettlementPort` (`UNKNOWN` until Phase 8)
+9. **Database:**
+   - RLS and composite company FKs on all new tables
+   - the triggers that freeze documents leaving DRAFT (only counters and state columns change afterwards)
+   - CHECKs on every counter
+   - partial unique indexes for one default and one live invoice number
+10. **Security:**
+    - every endpoint on the catalogued `partners.*` / `procurement.*` permissions
+    - branch scope for requisitions, orders, receipts and returns
+    - `Idempotency-Key` on convert, approve and all postings
+    - every mutation and transition audited
+11. **Tests:** 637 in 76 classes. New in this phase:
+    - the full procure-to-pay flow
+    - the purchase order, requisition, receipt/return, supplier bill and partner suites
+    - `ProcurementConcurrencyIntegrationTest`: concurrent receipts of one order, double posting, two bills of one receipt, double approval, double conversion
+    - unit tests for the state machines, three-way match, tax calculator and bank numbers
+    - event contract snapshots
 
-- The full P2P flow works through the API: requisition → PO → approval → partial receipts → bill with match → debit note.
-- Quantity tracking invariants hold under concurrent receipts against the same PO (the PO header lock).
+    Coverage: procurement.application 86%, procurement.domain 98%, partners.application 97%, partners.domain 100%, org.application 97%.
+
+**Exit criteria (met):**
+
+- The full P2P flow works through the API: requisition → PO → approval → partial receipts → bill with match → return → debit note (`ProcureToPayIntegrationTest`).
+- Quantity tracking holds under concurrent receipts against the same PO (the PO header lock): exactly one of four racing full receipts posts.
+
+**Moved to later phases** (ADR-036):
+
+| Item (planned for Phase 6) | Moved to | First consumer |
+|---|---|---|
+| Customer profiles (`PUT …/customer-profile`, `GET {c}/customers`) | Phase 7 | Sales orders |
+| PO PDF and supplier email; bank-detail change notification | Phase 7 | The document rendering and notification pipeline (invoices) |
+| Event Publication Registry, `processed_events`, the `org.company.created` seeding pipeline | Phase 7 | The first asynchronous listener (invoice PDF and email) |
+| S3 file port with MinIO; CSV import framework with partner and opening-stock import | Phase 7 | Invoice PDFs, imports |
+| Supplier payments and all accounting entries | Phase 8 | Accounting (as specified) |
+| Procurement reporting views | Phase 10 | Reporting |
+| Per-company SoD switch (G-17) | Phase 12 | Small-team deployments |
 
 ### Phase 7 — Sales
 
@@ -458,6 +511,7 @@ A phase is done only when **all** of the following hold:
 
 **Deliverables:**
 
+- Carried over from Phase 6 (ADR-036): customer profiles in Partners; the document rendering and notification pipeline (invoice and PO PDFs, emails, the bank-detail change notification) with the Event Publication Registry, `processed_events` and the `org.company.created` seeding pipeline; S3 files with MinIO; the CSV import framework (partners, opening stock).
 - Sales settings.
 - Price lists and the pricing engine (SAL-1), with a `POST /pricing/quote` endpoint.
 - Quotations (with an expiry job).
@@ -551,7 +605,7 @@ A phase is done only when **all** of the following hold:
 
 **Deliverables:**
 
-- Carried over from Phase 5 (ADR-035): the inventory `v_rpt_*` views (DATABASE.md §11).
+- Carried over from Phases 5 and 6 (ADR-035, ADR-036): the inventory and procurement `v_rpt_*` views (DATABASE.md §11).
 - `reporting` schema, the report catalogue and permission mapping, the reporting read-only DataSource (`erp_reporting` role, optional replica).
 - All reports in PRODUCT_SPEC.md §13, including gross margin and the GRNI reconciliation.
 - **The async export framework:** CSV, XLSX and PDF; CSV-injection-safe; size limits; file expiry.

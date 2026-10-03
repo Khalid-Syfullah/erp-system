@@ -158,7 +158,8 @@ Master data is never deleted once referenced. It is deactivated with `POST /…/
 | `CREDIT_LIMIT_EXCEEDED` | 422 | Credit check BLOCK |
 | `PARTNER_BLOCKED` / `PARTNER_ON_HOLD` | 422 | Partner restrictions |
 | `QUANTITY_EXCEEDS_REMAINING` | 422 | Over-delivery, over-receipt, over-billing, over-crediting, over-return |
-| `MATCH_EXCEPTION` | 422 | 3-way match failed |
+| `MATCH_EXCEPTION` | 422 | 3-way match failed (posting a bill whose match was neither passed nor overridden) |
+| `DEBIT_NOTE_EXCEEDS_BILL` | 422 | A debit note would credit more than is left of its original bill |
 | `ALLOCATION_INVALID` | 422 | Allocation partner, currency or amount mismatch |
 | `LEAVE_BALANCE_INSUFFICIENT` | 422 | |
 | `PAYROLL_NEGATIVE_NET` | 422 | |
@@ -240,7 +241,7 @@ Response envelope:
   - `POST` create of documents that may post immediately: payments, expenses, journal entries with `postImmediately`, stock adjustments with `postImmediately`.
   - All `POST` action endpoints that post, approve, pay, void, reverse or allocate.
 
-  It is **optional but honored** on the other POSTs of business documents that run through the idempotency executor (ADR-035). From Phase 5 that is stock movement creation; Procurement, Sales and Accounting add theirs. Master-data POSTs ignore the header.
+  It is **optional but honored** on the other POSTs of business documents that run through the idempotency executor (ADR-035). From Phase 5 that is stock movement creation; from Phase 6 the `[I]` endpoints of Procurement; Sales and Accounting add theirs. Master-data POSTs ignore the header.
 - Keys match `^[A-Za-z0-9_.:-]{8,128}$`; a missing key on a `[I]` endpoint or a malformed key is `400 BAD_REQUEST`.
 - Behaviour, per (authenticated principal, key), stored in `platform.idempotency_keys` for 24 hours (purged hourly):
   - **First request:** record it as IN_PROGRESS with a request hash (SHA-256 of method, path, query and the canonical JSON body with sorted keys), execute it, then store the status, the `ETag` and `Location` headers and the body (verbatim) as COMPLETED **in the same transaction** as the business change. On a failure response with a 4xx code, the business change rolls back and the key is then stored with that response in its own transaction, except `RESOURCE_BUSY` and the `IDEMPOTENCY_*` codes, which stay retryable. On a 5xx response or a transaction rollback, the key row is rolled back, so a retry executes again. Serialization failures and deadlocks are retried up to three times before answering (ARCHITECTURE.md §6.2).
@@ -368,12 +369,14 @@ These endpoints have no company in the path. Their permissions are global and he
 
 | Method & path | Permission |
 |---|---|
-| `GET/POST {c}/partners` · `GET/PATCH …/{id}` [A] · `POST …/{id}/{deactivate|activate|block}` [A] | `partners.partner.read` / `partners.partner.manage` |
-| `GET/POST/PATCH/DELETE {c}/partners/{id}/addresses[/{addrId}]`, `/contacts[/{contactId}]` | `partners.partner.manage` |
-| `GET/POST/DELETE {c}/partners/{id}/bank-accounts[/{bankId}]` (masked; `POST …/{bankId}/reveal` audit-logged) | `partners.partner.manage_bank` / `partners.partner.read_bank` |
-| `PUT {c}/partners/{id}/customer-profile` [A] · `PUT {c}/partners/{id}/supplier-profile` [A] | `partners.customer.manage` / `partners.supplier.manage` |
-| `GET {c}/customers` · `GET {c}/suppliers` (filtered views of partners with the profile) | `partners.partner.read` |
-| `GET/POST {c}/partner-groups` · `PATCH …/{id}` [A] | `partners.partner.manage` |
+| `GET/POST {c}/partners` (`?q=` searches code, names and tax number) · `GET/PATCH …/{id}` [A] · `POST …/{id}/{deactivate|activate|block}` [A] | `partners.partner.read` / `partners.partner.manage` |
+| `GET {c}/partners/{id}/addresses`, `/contacts` · `POST/PATCH/DELETE …[/{addrId}|/{contactId}]` (`PATCH` [A]) | `partners.partner.read` / `partners.partner.manage` |
+| `GET/POST {c}/partners/{id}/bank-accounts` · `DELETE …/{bankId}` (masked; `POST …/{bankId}/reveal` needs step-up and is audit-logged) | `partners.partner.read_bank` (list, reveal) / `partners.partner.manage_bank` (add, remove) |
+| `PUT {c}/partners/{id}/supplier-profile` [A] (`If-Match: W/"0"` creates it) | `partners.supplier.manage` |
+| `GET {c}/suppliers` (partners with a supplier profile) | `partners.partner.read` |
+| `GET/POST {c}/partner-groups` · `GET/PATCH …/{id}` [A] | `partners.partner.read` / `partners.partner.manage` |
+
+The partner detail embeds its addresses, contacts and supplier profile. Customer profiles (`PUT …/customer-profile`, `GET {c}/customers`) follow with Sales in Phase 7 (ADR-036).
 
 ### 17.5 Inventory
 
@@ -403,21 +406,22 @@ Branch-restricted users see and act only on warehouses of their branches (moveme
 
 | Method & path | Permission |
 |---|---|
-| `GET/POST {c}/purchase-requisitions` · `GET/PATCH/DELETE …/{id}` [A] · lines sub-resource | `procurement.requisition.read` / `.create` |
-| `POST {c}/purchase-requisitions/{id}/{submit|approve|reject|cancel}` [A] | `.create` (submit, cancel) / `.approve` |
-| `POST {c}/purchase-requisitions/{id}/convert` [A][I] `{supplierId, lineIds}` → creates draft PO(s) | `procurement.purchase_order.create` |
-| `GET/POST {c}/purchase-orders` · `GET/PATCH/DELETE …/{id}` [A] · `GET/POST/PATCH/DELETE …/{id}/lines[/{lineId}]` [A] | `procurement.purchase_order.read` / `.create` |
-| `POST {c}/purchase-orders/{id}/{submit|approve|reject|cancel|close}` [A][I approve] | `.create` / `.approve` (+ `.approve_high`) / `.cancel` / `.close` |
-| `GET {c}/purchase-orders/{id}/pdf` | `.read` |
-| `GET/POST {c}/goods-receipts` (create from PO: `{purchaseOrderId, lines[{purchaseOrderLineId, quantity, uomId, locationId}]}`) · `GET/PATCH/DELETE …/{id}` [A] | `procurement.receipt.read` / `.create` |
-| `POST {c}/goods-receipts/{id}/{post|cancel}` [A][I post] | `procurement.receipt.post` |
-| `GET/POST {c}/purchase-returns` · `POST …/{id}/{post|cancel}` [A][I] | `procurement.return.manage` |
-| `GET/POST {c}/supplier-bills` (`documentType` BILL or DEBIT_NOTE; prefill from PO/receipts: `POST {c}/supplier-bills/from-receipts`) · `GET/PATCH/DELETE …/{id}` [A] · lines | `procurement.supplier_bill.read` / `.create` |
-| `POST {c}/supplier-bills/{id}/check-match` [A] | `.create` |
+| `GET/POST {c}/purchase-requisitions` · `GET/PATCH/DELETE …/{id}` [A] (lines are replaced through the `lines` array of the merge patch) | `procurement.requisition.read` / `.create` |
+| `POST {c}/purchase-requisitions/{id}/{submit|cancel}` [A] · `POST …/{id}/{approve|reject}` [A] (`reject {reason}`) | `.create` / `.approve` |
+| `POST {c}/purchase-requisitions/{id}/convert` [A][I] `{supplierId, warehouseId, lineIds?}` → 201 with a draft PO (no `lineIds`: every line with quantity left) | `procurement.purchase_order.create` |
+| `GET/POST {c}/purchase-orders` · `GET/PATCH/DELETE …/{id}` [A] (lines replaced through the `lines` array) | `procurement.purchase_order.read` / `.create` |
+| `POST {c}/purchase-orders/{id}/submit` [A] · `/approve` [A][I] · `/reject` [A] `{reason}` · `/cancel` [A] `{reason?}` · `/close` [A] `{reason?}` | `.create` / `.approve` (+ `.approve_high` above the threshold) / `.approve` / `.cancel` / `.close` |
+| `GET/POST {c}/goods-receipts` (create from an approved PO: `{purchaseOrderId, receiptDate?, lines?[{purchaseOrderLineId, quantity, uomId?, locationId?}]}`; no `lines`: everything open on its stockable lines) · `GET/PATCH/DELETE …/{id}` [A] | `procurement.receipt.read` / `.create` |
+| `POST {c}/goods-receipts/{id}/post` [A][I] · `/cancel` [A] | `procurement.receipt.post` |
+| `GET/POST {c}/purchase-returns` (`{goodsReceiptId, reason, lines[{goodsReceiptLineId, quantity, uomId?}]}`) · `GET …/{id}` · `POST …/{id}/{post|cancel}` [A][I] | `procurement.return.manage` |
+| `GET/POST {c}/supplier-bills` (`documentType` BILL or DEBIT_NOTE; lines against `goodsReceiptLineId`, `purchaseOrderLineId` or, for direct bills, `variantId`) · `POST {c}/supplier-bills/from-receipts` `{goodsReceiptIds, supplierInvoiceNumber, billDate?}` · `GET/PATCH/DELETE …/{id}` [A] | `procurement.supplier_bill.read` / `.create` (+ `.create_direct` without any order) |
+| `POST {c}/supplier-bills/{id}/check-match` [A] → `{matchStatus, issues[]}` | `.create` |
 | `POST {c}/supplier-bills/{id}/override-match` [A] `{reason}` | `procurement.supplier_bill.override_match` |
-| `POST {c}/supplier-bills/{id}/{post|cancel}` [A][I post] | `procurement.supplier_bill.post` |
-| `GET {c}/supplier-bills/{id}/settlement` (open amount, through the port to Accounting) | `.read` |
-| `GET/PUT {c}/settings/procurement` [A] | `procurement.settings.manage` |
+| `POST {c}/supplier-bills/{id}/post` [A][I] · `/cancel` [A] | `procurement.supplier_bill.post` |
+| `GET {c}/supplier-bills/{id}/settlement` (open amount, through the port to Accounting; `UNKNOWN` until Phase 8) | `.read` |
+| `GET/PUT {c}/settings/procurement` [A] (`poApprovalThresholdBase`, `priceMatchTolerancePercent`, `qtyMatchTolerancePercent`) | `procurement.settings.manage` |
+
+Branch-restricted users see requisitions, orders, receipts and returns of their branches only (others answer `404`); supplier bills are company-level documents. Amounts are always computed by the server (G-7); client-sent totals are rejected as unknown properties. The PO PDF (`GET …/{id}/pdf`) follows with the document rendering pipeline (ADR-036).
 
 ### 17.7 Sales
 

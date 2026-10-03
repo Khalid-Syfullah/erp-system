@@ -3,13 +3,19 @@ package com.erp.org.application;
 import com.erp.org.api.BranchSummary;
 import com.erp.org.api.CompanyProfile;
 import com.erp.org.api.CompanySummary;
+import com.erp.org.api.CurrencyInfo;
 import com.erp.org.api.DepartmentSummary;
 import com.erp.org.api.OrgFacade;
+import com.erp.org.api.PaymentTermsSummary;
 import com.erp.org.api.TaxCodeSummary;
 import com.erp.org.persistence.BranchRepository;
 import com.erp.org.persistence.CompanyRepository;
 import com.erp.org.persistence.DepartmentRepository;
+import com.erp.org.persistence.ExchangeRateRepository;
+import com.erp.org.persistence.PaymentTermsRepository;
 import com.erp.org.persistence.TaxCodeRepository;
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -28,16 +34,22 @@ class OrgDirectory implements OrgFacade {
     private final BranchRepository branches;
     private final DepartmentRepository departments;
     private final TaxCodeRepository taxCodes;
+    private final ExchangeRateRepository exchangeRates;
+    private final PaymentTermsRepository paymentTerms;
 
     OrgDirectory(
             CompanyRepository companies,
             BranchRepository branches,
             DepartmentRepository departments,
-            TaxCodeRepository taxCodes) {
+            TaxCodeRepository taxCodes,
+            ExchangeRateRepository exchangeRates,
+            PaymentTermsRepository paymentTerms) {
         this.companies = companies;
         this.branches = branches;
         this.departments = departments;
         this.taxCodes = taxCodes;
+        this.exchangeRates = exchangeRates;
+        this.paymentTerms = paymentTerms;
     }
 
     @Override
@@ -83,7 +95,15 @@ class OrgDirectory implements OrgFacade {
     @Transactional(readOnly = true)
     public Optional<TaxCodeSummary> taxCode(UUID companyId, UUID taxCodeId) {
         return taxCodes.find(companyId, taxCodeId)
-                .map(t -> new TaxCodeSummary(t.id(), t.code(), t.scope(), t.active()));
+                .map(t -> new TaxCodeSummary(
+                        t.id(),
+                        t.code(),
+                        t.scope(),
+                        t.ratePercent(),
+                        t.exempt(),
+                        t.validFrom(),
+                        t.validTo(),
+                        t.active()));
     }
 
     @Override
@@ -93,5 +113,38 @@ class OrgDirectory implements OrgFacade {
         branches.findAll(companyId, branchIds)
                 .forEach(b -> result.put(b.id(), new BranchSummary(b.id(), b.code(), b.name(), b.active())));
         return result;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<BigDecimal> exchangeRate(UUID companyId, String currencyCode, LocalDate date) {
+        Optional<CompanyProfile> company = companies.profile(companyId);
+        if (company.isEmpty()) {
+            return Optional.empty();
+        }
+        if (company.get().baseCurrency().equals(currencyCode)) {
+            return Optional.of(BigDecimal.ONE);
+        }
+        return exchangeRates.latestOnOrBefore(companyId, currencyCode, date).map(ExchangeRateView::rate);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<CurrencyInfo> currency(String currencyCode) {
+        return companies.currency(currencyCode);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<PaymentTermsSummary> paymentTerms(UUID companyId, UUID paymentTermsId) {
+        return paymentTerms
+                .find(companyId, paymentTermsId)
+                .map(t -> new PaymentTermsSummary(t.id(), t.code(), t.name(), t.dueDays(), t.dueBasis(), t.active()));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public boolean countryExists(String countryCode) {
+        return companies.countryExists(countryCode);
     }
 }

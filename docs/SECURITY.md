@@ -214,11 +214,12 @@ Company-wide resources (CoA, partners, products, journal entries) are not branch
 - Foreign IDs in request bodies (`customerId`, `variantId`, `locationId`, `accountId`, …) are validated as belonging to the active company, and to the user's branch scope where relevant, before use. Composite FKs reject any miss at the database.
 - **Automated test (mandatory from Phase 3):** an `IdorSuiteTest` enumerates every endpoint with a path or body ID, creates fixtures in companies A and B, authenticates as a full-permission user of A only, and asserts a 404 (or 422 for body references) for every B identifier. Every new endpoint is covered automatically by OpenAPI introspection.
   - *Phase 3 implementation:* `EndpointSecurityMatrixTest` enumerates the registered handler methods (there is no OpenAPI document yet). For every endpoint it asserts 401 for anonymous callers, 404 for a member of company A addressing company B, and 403 for a member without the required permission. `AuthorizationIntegrationTest` adds fixture-based IDOR cases: another company's branch through one's own company path (GET, PATCH, actions), another company's role assignment, and foreign branch IDs in an assignment body (422). Each later module adds its fixture cases.
+  - *Phase 6:* the procurement and partner suites add IDOR cases: another company's orders, receipts, partners and supplier profiles through one's own path (404), and foreign suppliers, warehouses, products and payment terms in bodies (422). Partner bank accounts are field-encrypted, listed masked (`****1234`) to `partners.partner.read_bank`, and revealed only after step-up with a `VIEW_SENSITIVE` audit record; the change notification to the procurement manager (PRODUCT_SPEC.md §5) follows with the notification pipeline (ADR-036).
   - *Phase 5:* the OpenAPI document exists (`OpenApiContractTest`, ADR-035) and is checked against the same handler annotations, so the matrix keeps its handler introspection. `InventoryAccessIntegrationTest` adds inventory IDOR cases: another company's movements, variants and warehouses through one's own path (404), and foreign variants, locations and warehouses in movement bodies (422). Branch-restricted users get 404 for other branches' warehouses, locations and movements. The OpenAPI document is not served at runtime.
 
 ### 4.6 Segregation of duties (SoD)
 
-The rules are enforced in domain policies. They are configurable per company only through system settings, and every change is audited.
+The rules are enforced in domain policies. They are configurable per company only through system settings, and every change is audited. *Phase 6 status:* the requisition and purchase-order rules are enforced (`403 SOD_VIOLATION`) and always on; the per-company switch for small teams is not implemented yet (ADR-036).
 
 | Rule | Default |
 |---|---|
@@ -226,7 +227,7 @@ The rules are enforced in domain policies. They are configurable per company onl
 | PO approver ≠ creator or submitter | on |
 | Manual journal entry poster ≠ creator, when the total is > the configurable threshold | on (threshold 0 = always) |
 | Payroll run approver ≠ the user who calculated it | on |
-| Supplier bank detail change ≠ payment poster for that supplier within 24 hours (warning + notification) | warn |
+| Supplier bank detail change ≠ payment poster for that supplier within 24 hours (warning + notification) | warn (with payments, Phase 8) |
 | Credit override by a user other than the order creator | off (warning only) |
 
 ---
