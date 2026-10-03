@@ -42,6 +42,8 @@ public class CompanyService {
             "city",
             "region",
             "postalCode",
+            "roundingMode",
+            "taxRounding",
             "status");
 
     private final CompanyRepository companies;
@@ -106,6 +108,16 @@ public class CompanyService {
         MergePatch.Member<String> city = patch.text("city", false, 100);
         MergePatch.Member<String> region = patch.text("region", false, 100);
         MergePatch.Member<String> postalCode = patch.text("postalCode", false, 20);
+        MergePatch.Member<String> roundingMode = patch.text(
+                "roundingMode",
+                true,
+                10,
+                s -> Set.of("HALF_UP", "HALF_EVEN").contains(s) ? null : "must be HALF_UP or HALF_EVEN");
+        MergePatch.Member<String> taxRounding = patch.text(
+                "taxRounding",
+                true,
+                12,
+                s -> Set.of("PER_LINE", "PER_DOCUMENT").contains(s) ? null : "must be PER_LINE or PER_DOCUMENT");
         MergePatch.Member<String> status = patch.text(
                 "status",
                 true,
@@ -130,6 +142,8 @@ public class CompanyService {
                         city.orElse(current.city()),
                         region.orElse(current.region()),
                         postalCode.orElse(current.postalCode()),
+                        roundingMode.orElse(current.roundingMode()),
+                        taxRounding.orElse(current.taxRounding()),
                         status.orElse(current.status())));
         if (!updated) {
             throw new ApiException(PlatformErrorCode.VERSION_CONFLICT, "The company was modified concurrently.");
@@ -149,6 +163,8 @@ public class CompanyService {
                 .change("city", current.city(), after.city())
                 .change("region", current.region(), after.region())
                 .change("postalCode", current.postalCode(), after.postalCode())
+                .change("roundingMode", current.roundingMode(), after.roundingMode())
+                .change("taxRounding", current.taxRounding(), after.taxRounding())
                 .change("status", current.status(), after.status())
                 .build());
         return after;

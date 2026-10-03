@@ -222,7 +222,7 @@ The kernel is a library-like shared module that every module may use. It must st
 | `platform.logging` | Log redaction for pattern and structured logs |
 | `platform.web.paging`, `platform.jooq` | List contracts (`ListDefinition`), parameter parsing, signed keyset cursors, `KeysetPaginator` over jOOQ |
 
-**Status:** Phase 2 implemented `config`, `context`, `tx`, `web` (incl. paging), `jooq`, `json`, `logging` and `security`. The other packages arrive with their first consumer; see the table at the end of DEVELOPMENT_PLAN.md Phase 2.
+**Status:** Phase 2 implemented `config`, `context`, `tx`, `web` (incl. paging), `jooq`, `json`, `logging` and `security`; Phase 3 added `audit` and `crypto`. The other packages arrive with their first consumer; see the tables at the end of DEVELOPMENT_PLAN.md Phases 2 and 4.
 
 ---
 
@@ -235,7 +235,7 @@ The kernel is a library-like shared module that every module may use. It must st
 | **Synchronous facade call** (`<module>.api.*Facade`) | The caller needs an answer or a state change **as part of its own business transaction**. | Joins the caller's transaction (`Propagation.REQUIRED`). | Sales calls `InventoryFacade.reserve(...)` when it confirms an order. |
 | **Synchronous in-transaction event listener** (`@EventListener`) | A downstream module must react **atomically** to a fact published by an upstream module, and the upstream module must not know about it. | Same transaction. A listener exception rolls back the publisher. | Accounting creates a journal entry when `SalesInvoicePosted` is published. |
 | **Asynchronous reliable event listener** (`@ApplicationModuleListener`, backed by the Event Publication Registry) | Side effects that may happen **after** commit and must not block or roll back the business transaction. | New transaction after commit; at-least-once; retried; the consumer must be idempotent. | Email notifications, search/reporting projections, cache invalidation, webhooks. |
-| **Port (dependency inversion)** | An upstream module needs data that a downstream module owns, and a direct dependency would create a cycle. | Same transaction. | Sales defines `CustomerCreditExposurePort`; Accounting implements it. |
+| **Port (dependency inversion)** | An upstream module needs data that a downstream module owns, and a direct dependency would create a cycle. | Same transaction. | Sales defines `CustomerCreditExposurePort`; Accounting implements it. Org defines `OrganizationUsage` and `TaxCodeUsage`; HR (and later Inventory and the document modules) implement them (ADR-034). |
 | **Read-only reporting views** | Reporting needs cross-module joins. | Read-only; uses a reporting DB role. | `inventory.v_stock_on_hand` consumed by Reporting. |
 
 **Hard rules**

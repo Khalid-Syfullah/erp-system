@@ -15,7 +15,7 @@ import org.springframework.test.context.DynamicPropertySource;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import({TestNotifierConfiguration.class, AuthTestSupport.class})
+@Import({TestNotifierConfiguration.class, AuthTestSupport.class, OrgFixtures.class, TestTaxCodeUsage.class})
 public abstract class IntegrationTest {
 
     @DynamicPropertySource

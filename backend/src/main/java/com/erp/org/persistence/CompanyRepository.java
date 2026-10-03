@@ -86,6 +86,8 @@ public class CompanyRepository {
                         .set(COMPANIES.CITY, c.city())
                         .set(COMPANIES.REGION, c.region())
                         .set(COMPANIES.POSTAL_CODE, c.postalCode())
+                        .set(COMPANIES.ROUNDING_MODE, c.roundingMode())
+                        .set(COMPANIES.TAX_ROUNDING, c.taxRounding())
                         .set(COMPANIES.STATUS, c.status())
                         .set(COMPANIES.UPDATED_AT, OffsetDateTime.now())
                         .set(COMPANIES.UPDATED_BY, actor)
@@ -112,6 +114,7 @@ public class CompanyRepository {
                         r.getCode(),
                         r.getDisplayName(),
                         r.getBaseCurrency(),
+                        r.getTimezone(),
                         "ACTIVE".equals(r.getStatus())));
     }
 

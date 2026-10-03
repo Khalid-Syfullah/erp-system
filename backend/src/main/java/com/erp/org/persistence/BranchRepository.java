@@ -71,6 +71,28 @@ public class BranchRepository {
                 .map(BranchRepository::toView);
     }
 
+    /** Locks the row against concurrent changes ({@code FOR NO KEY UPDATE}) before a state change. */
+    public Optional<BranchView> lockForChange(UUID companyId, UUID id, @Nullable Set<UUID> branchScope) {
+        return dsl.selectFrom(BRANCHES)
+                .where(BRANCHES.COMPANY_ID.eq(companyId))
+                .and(BRANCHES.ID.eq(id))
+                .and(scope(branchScope))
+                .forNoKeyUpdate()
+                .fetchOptional()
+                .map(BranchRepository::toView);
+    }
+
+    /** Locks the row {@code FOR SHARE}: a concurrent deactivation waits until the caller commits. */
+    public Optional<BranchView> lockForUse(UUID companyId, UUID id, @Nullable Set<UUID> branchScope) {
+        return dsl.selectFrom(BRANCHES)
+                .where(BRANCHES.COMPANY_ID.eq(companyId))
+                .and(BRANCHES.ID.eq(id))
+                .and(scope(branchScope))
+                .forShare()
+                .fetchOptional()
+                .map(BranchRepository::toView);
+    }
+
     public PageResponse<BranchView> list(UUID companyId, @Nullable Set<UUID> branchScope, ListQuery query) {
         return paginator.fetch(
                 dsl,

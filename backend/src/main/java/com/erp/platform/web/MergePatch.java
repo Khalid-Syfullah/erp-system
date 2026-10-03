@@ -1,10 +1,15 @@
 package com.erp.platform.web;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 import org.jspecify.annotations.Nullable;
 import tools.jackson.databind.JsonNode;
 
@@ -27,6 +32,9 @@ public final class MergePatch {
             return present ? value : current;
         }
     }
+
+    /** Same grammar as the request-body decimal deserializer (API.md §11). */
+    private static final Pattern PLAIN_DECIMAL = Pattern.compile("^-?(0|[1-9][0-9]{0,30})(\\.[0-9]{1,12})?$");
 
     private final JsonNode document;
     private final List<FieldViolation> violations = new ArrayList<>();
@@ -124,6 +132,72 @@ public final class MergePatch {
             return Member.absent();
         }
         return new Member<>(true, node.booleanValue());
+    }
+
+    /** A reference member: a UUID string, or {@code null} to clear an optional reference. */
+    public Member<UUID> uuid(String name, boolean required) {
+        Member<String> member = text(name, required, 36);
+        if (!member.present() || member.value() == null) {
+            return member.present() ? new Member<>(true, null) : Member.absent();
+        }
+        try {
+            return new Member<>(true, UUID.fromString(member.value()));
+        } catch (IllegalArgumentException e) {
+            violations.add(FieldViolation.atPointer("/" + name, "INVALID_VALUE", "must be a UUID"));
+            return Member.absent();
+        }
+    }
+
+    /** An ISO-8601 calendar date ({@code yyyy-MM-dd}), or {@code null} when not required. */
+    public Member<LocalDate> date(String name, boolean required) {
+        Member<String> member = text(name, required, 10);
+        if (!member.present() || member.value() == null) {
+            return member.present() ? new Member<>(true, null) : Member.absent();
+        }
+        try {
+            return new Member<>(true, LocalDate.parse(member.value()));
+        } catch (DateTimeParseException e) {
+            violations.add(FieldViolation.atPointer("/" + name, "INVALID_VALUE", "must be a date (yyyy-MM-dd)"));
+            return Member.absent();
+        }
+    }
+
+    /**
+     * A decimal carried as a JSON string in plain notation (API.md §11), never null.
+     *
+     * @param maxScale maximum number of fraction digits
+     */
+    public Member<BigDecimal> decimal(String name, BigDecimal min, BigDecimal max, int maxScale) {
+        if (!document.has(name)) {
+            return Member.absent();
+        }
+        JsonNode node = document.get(name);
+        if (!node.isString()) {
+            violations.add(FieldViolation.atPointer("/" + name, "INVALID_VALUE", "must be a decimal string"));
+            return Member.absent();
+        }
+        String text = node.stringValue();
+        if (!PLAIN_DECIMAL.matcher(text).matches()) {
+            violations.add(FieldViolation.atPointer("/" + name, "INVALID_VALUE", "must be a plain decimal string"));
+            return Member.absent();
+        }
+        BigDecimal value = new BigDecimal(text);
+        if (value.compareTo(min) < 0
+                || value.compareTo(max) > 0
+                || value.stripTrailingZeros().scale() > maxScale) {
+            violations.add(FieldViolation.atPointer(
+                    "/" + name,
+                    "INVALID_VALUE",
+                    "must be between " + min.toPlainString() + " and " + max.toPlainString() + " with at most "
+                            + maxScale + " decimal places"));
+            return Member.absent();
+        }
+        return new Member<>(true, value);
+    }
+
+    /** Records a violation found by the caller's own checks (e.g. cross-field rules). */
+    public void reject(String name, String code, String message) {
+        violations.add(FieldViolation.atPointer("/" + name, code, message));
     }
 
     public void throwIfInvalid() {

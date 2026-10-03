@@ -1,6 +1,7 @@
 package com.erp.org.application;
 
 import com.erp.org.persistence.BranchRepository;
+import com.erp.org.persistence.DepartmentRepository;
 import com.erp.platform.audit.AuditEvent;
 import com.erp.platform.audit.AuditPort;
 import com.erp.platform.context.CurrentContext;
@@ -31,10 +32,15 @@ public class BranchService {
             Set.of("name", "addressLine1", "addressLine2", "city", "region", "postalCode", "countryCode");
 
     private final BranchRepository branches;
+    private final DepartmentRepository departments;
+    private final OrgUsageChecks usage;
     private final AuditPort audit;
 
-    public BranchService(BranchRepository branches, AuditPort audit) {
+    public BranchService(
+            BranchRepository branches, DepartmentRepository departments, OrgUsageChecks usage, AuditPort audit) {
         this.branches = branches;
+        this.departments = departments;
+        this.usage = usage;
         this.audit = audit;
     }
 
@@ -78,7 +84,11 @@ public class BranchService {
 
     @Transactional
     public BranchView patch(UUID branchId, @Nullable String ifMatch, JsonNode document) {
-        BranchView current = get(branchId);
+        BranchView current = branches.lockForChange(
+                        CurrentContext.requireCompany(),
+                        branchId,
+                        CurrentContext.require().branchScope())
+                .orElseThrow(ApiException::notFound);
         EntityTags.requireMatch(ifMatch, current.version());
         MergePatch patch = MergePatch.of(document, PATCHABLE);
         MergePatch.Member<String> name = patch.text("name", true, 100);
@@ -115,13 +125,29 @@ public class BranchService {
         return after;
     }
 
+    /**
+     * Deactivation locks the branch first and then requires that no active department belongs to it
+     * and that no other module still uses it (PRODUCT_SPEC.md §4.2).
+     */
     @Transactional
     public BranchView setActive(UUID branchId, @Nullable String ifMatch, boolean active) {
-        BranchView current = get(branchId);
+        UUID companyId = CurrentContext.requireCompany();
+        BranchView current = branches.lockForChange(
+                        companyId, branchId, CurrentContext.require().branchScope())
+                .orElseThrow(ApiException::notFound);
         EntityTags.requireMatch(ifMatch, current.version());
         if (current.active() == active) {
             throw new ApiException(
                     PlatformErrorCode.INVALID_STATE, "The branch is already " + (active ? "active." : "inactive."));
+        }
+        if (!active) {
+            List<String> departmentCodes = departments.activeCodesInBranch(companyId, branchId);
+            usage.requireBranchUnused(
+                    companyId,
+                    branchId,
+                    departmentCodes.isEmpty()
+                            ? List.of()
+                            : List.of("active departments " + String.join(", ", departmentCodes)));
         }
         update(
                 current,

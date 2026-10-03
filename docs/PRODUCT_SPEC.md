@@ -197,7 +197,8 @@ Disabling a user revokes all of their sessions and API tokens immediately.
 ### 4.2 Rules
 
 - A company's base currency cannot change after the first posted journal entry.
-- A branch or department cannot be deactivated while it has active warehouses (for branches) or active employee assignments.
+- A branch or department cannot be deactivated while it has active warehouses (for branches), current or future employee assignments, active departments (sub-departments, or departments tied to the branch), active positions or current department heads. New or moved departments, assignments and positions need active units; reactivating a unit needs an active parent.
+- Departments form a tree without cycles. A department tied to a branch is used only in that branch; a position tied to a department is held only in that department.
 - Tax codes cannot be deleted once used. They are deactivated or end-dated instead. A tax code's rate cannot change once it is used: create a new code with validity dates.
 
 ---

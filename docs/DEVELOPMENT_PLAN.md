@@ -14,7 +14,7 @@ Related: [ARCHITECTURE.md](ARCHITECTURE.md) · [DATABASE.md](DATABASE.md) · [AP
 flowchart LR
   P1[1 Architecture & spec] --> P2[2 Foundation + Org core]
   P2 --> P3[3 Auth & RBAC]
-  P3 --> P4[4 Organization + Partners]
+  P3 --> P4[4 Organization]
   P4 --> P5[5 Inventory]
   P5 --> P6[6 Procurement]
   P6 --> P7[7 Sales]
@@ -30,7 +30,7 @@ flowchart LR
 | 1 | Architecture and specification | — | M (done) |
 | 2 | Foundation (platform kernel, tooling, org core) | 1 | L (done) |
 | 3 | Authentication and RBAC | 2 | L (done) |
-| 4 | Organization (complete) and Partners | 3 | M |
+| 4 | Organization management (incl. HR organizational slice) | 3 | M (done) |
 | 5 | Inventory | 4 | XL |
 | 6 | Procurement | 5 | L |
 | 7 | Sales | 5, 6 (patterns) | L |
@@ -44,7 +44,7 @@ flowchart LR
 
 1. **The foundation comes first.** It provides the transaction manager with RLS context, the error model, idempotency, audit, numbering, events and test infrastructure. Every module relies on these. Building them later would mean retrofitting dozens of endpoints.
 2. **Auth before any business module.** Every endpoint must be deny-by-default and permission-annotated from day one. The authz matrix and IDOR test suites are created once in Phase 3, and every later phase adds its endpoints to them automatically.
-3. **A small org core is pulled into Phase 2.** Auth's role assignments are scoped to companies (an `auth → org` dependency), so `org.companies`, `org.branches`, `org.currencies` and `org.countries` must exist before Phase 3. Phase 4 completes Org (departments, tax codes, payment terms, exchange rates, settings, numbering configuration) and adds Partners, which every transactional module needs.
+3. **A small org core is pulled into Phase 2.** Auth's role assignments are scoped to companies (an `auth → org` dependency), so `org.companies`, `org.branches`, `org.currencies` and `org.countries` must exist before Phase 3. Phase 4 completes Org (departments, tax codes, payment terms, exchange rates, settings) and, per ADR-033, HR's organizational slice; Partners, which every transactional module needs, arrive with their first consumer in Phase 6.
 4. **Inventory before Procurement and Sales.** Inventory owns the catalog, UoMs, warehouses and the only path to change stock. Procurement (receipts, returns) and Sales (reservations, deliveries, returns) call its facade.
 5. **Procurement before Sales.** Stock must come in before it can go out, so realistic Sales tests need receipts. Procurement also sets the document patterns (lines, state machines, three-way quantity tracking) that Sales reuses.
 6. **Accounting after the operational modules.** This is deliberate and safe because of the event-driven downstream design (ARCHITECTURE.md §5.2, §6.4):
@@ -281,30 +281,86 @@ A phase is done only when **all** of the following hold:
 - New Phase 4 endpoints must declare permissions from SECURITY.md §4.2 (already seeded).
 - Phase 4 adds the idempotency store, the event publication registry and OpenAPI generation.
 
-### Phase 4 — Organization (complete) and Partners
+### Phase 4 — Organization management ✅
 
 **Prerequisites:** Phase 3.
 
-**Deliverables:**
+**Scope** (ADR-033): the Phase 4 brief, which is the organizational structure, designations and employee relationships, plus the rest of the Org module. The plan's Partners and platform items moved to their first consumers (table at the end of this section).
 
-- Carried over from Phase 2 (ADR-025): idempotency (filter, store, purge), the Event Publication Registry and the `processed_events` dedup helper, the S3 file port with MinIO in compose, and `platform.money`. (Field encryption was delivered in Phase 3, ADR-031.)
-- Carried over from Phase 3: OpenAPI generation with `x-permission`, and switching the IDOR suite to OpenAPI introspection for body references.
-- **Org:**
-  - departments (tree, cycle guard)
-  - exchange rates (with the lookup service: latest on or before a date)
-  - tax codes (validity, immutability once used, through a usage port)
-  - payment terms (due date calculation)
-  - company settings, numbering prefixes
-  - company creation seeding pipeline (the `org.company.created` async listener framework; module seeders are registered by later phases)
-- **Partners:** partners, addresses, contacts, encrypted bank accounts (masking, reveal, change notification), customer and supplier profiles, partner groups, search (`pg_trgm`).
-- **Admin:** company audit-log query endpoints (`GET {c}/audit-log`), entity history.
-- CSV import framework (dry-run, per-row errors), used for partners here and reused later.
+**Delivered:**
 
-**Exit criteria:**
+1. **Org (complete):**
+   - **Departments:**
+     - a company tree with an optional branch
+     - a cycle guard in the service and a trigger, serialized per company
+     - CRUD, activate and deactivate, list (filters `parentId`, `branchId`, `isActive`, `code`; search; sort; cursor paging) and `GET …/departments/tree`
+   - **Exchange rates:**
+     - CRUD (the rate is the only editable field) and hard delete, because documents snapshot rates
+     - lookup of the latest rate on or before a date (`GET …/exchange-rates/lookup`; base currency = 1; `422 EXCHANGE_RATE_MISSING`)
+   - **Tax codes:** validity dates, exempt ⇒ 0 %, activate and deactivate, rate/scope/exemption frozen once used (`TaxCodeUsage` port).
+   - **Payment terms:** `DOCUMENT_DATE` and `END_OF_MONTH` bases, `GET …/payment-terms/{id}/due-date`, activate and deactivate.
+   - **Company settings:** `roundingMode` and `taxRounding` in the company PATCH.
+   - **Activation rules:**
+     - Branches and departments cannot be deactivated while active departments, sub-departments or downstream uses exist (`OrganizationUsage` port, ADR-034).
+     - Reactivation needs active parents.
+     - New uses need active units.
+   - `OrgFacade` gains `branchForUse` and `departmentForUse` (share locks), and `CompanySummary` carries the timezone (the business date).
+2. **HR, organizational slice** (new `hr` module, depending only on `org :: api`):
+   - **Positions** (designations / job titles), optionally tied to one department:
+     - CRUD, activate and deactivate
+     - not deactivatable while held
+     - not re-tied to a department other than the one its holders are in
+   - **Core employees:**
+     - number, names, work email, hire and termination dates
+     - status machine `ONBOARDING → ACTIVE ⇄ ON_LEAVE → TERMINATED`
+     - termination ends assignments and headships, and is refused while assignments or headships start later or reports remain
+     - terminated records are read-only
+   - **Employment assignments** (the employee's branch, department, position and manager, effective-dated):
+     - no overlap (HR-1: service check plus exclusion constraint)
+     - start on or after the hire date
+     - units active and consistent: a department tied to a branch is used only in that branch, and a position tied to a department only in that department
+     - the manager is employed for the whole period, and there is no reporting cycle at any date of the period (`ReportingLines`, advisory lock)
+     - only future assignments can be deleted
+     - company-wide list with `asOf`
+   - **Department heads:** effective-dated, one per department at a time (exclusion constraint), ended at termination.
+   - **Branch scope:**
+     - employees are visible through their current assignment's branch, and assignments through their branch
+     - branch-restricted users create employees only together with an initial assignment in their branches
+3. **RBAC:**
+   - every endpoint uses the catalogued permissions (`org.department.*`, `org.exchange_rate.*`, `org.tax_code.*`, `org.payment_terms.*`, `hr.employee.read/manage/terminate`, `hr.position.manage`)
+   - HR roles gain `org.branch.read` and `org.department.read`
+   - every mutation writes an audit record (`CREATE`, `UPDATE`, `STATE_CHANGE`, `DELETE`) with field diffs
+4. **Data integrity:** for all new tables:
+   - composite same-company FKs, RLS, unique codes per company
+   - CHECK constraints for enumerations, ranges and date order
+   - exclusion constraints for effective-dated rows
+   - indexes on every FK
+   - the locks catalogued in DATABASE.md §9
+5. **Tests:** 292 in 51 classes. New in this phase:
+   - department, reference-data, employee, assignment, and position/department-head API suites: CRUD, permissions, company and branch isolation, invalid relationships, duplicates, pagination, filtering, search, sorting, audit
+   - concurrency tests: crossing department moves, overlapping assignments
+   - unit tests for `ReportingLines`, `EffectivePeriod`, `EmployeeStatus`, `DueDateBasis` and `MergePatch`
 
-- The API tests in §17.3 and §17.4 pass.
-- Bank detail changes are audited with redaction.
-- Partners from company B are invisible from A (IDOR and RLS).
+   `EndpointSecurityMatrixTest` and `RowLevelSecurityIntegrationTest` cover the new endpoints and tables automatically. Coverage: org.application 97%, hr.application 94%, hr.domain 98%, org.domain 100%.
+
+**Exit criteria (met):**
+
+- API tests for §17.3 and the HR organizational endpoints of §17.9 pass.
+- Another company's records are invisible (404), both through paths and through body references (422), and RLS backs this up.
+- Organizational relationships cannot become inconsistent, including under concurrent changes.
+
+**Moved to later phases** (ADR-033):
+
+| Item (planned for Phase 4) | Moved to | First consumer |
+|---|---|---|
+| Idempotency filter, store and purge | Phase 5 | Posting stock movements (`[I]` endpoints) |
+| Event Publication Registry, `processed_events`, the `org.company.created` seeding pipeline | Phase 5 | Inventory seeders and the first published events |
+| `platform.money` | Phase 5 | Stock values |
+| Numbering prefixes (`GET/PUT {c}/settings/numbering`) | Phase 5 | Document numbers (with `platform.numbering`) |
+| OpenAPI with `x-permission`; IDOR suite via OpenAPI | Phase 5 | Definition of done |
+| Partners (addresses, contacts, encrypted bank accounts, customer and supplier profiles, groups, search) | Phase 6 | Suppliers on purchase orders |
+| CSV import framework | Phase 6 | Partner import (opening stock CSV in Phase 5 uses a simple importer, later moved onto the framework) |
+| S3 file port and MinIO | Phase 6 | Supplier bill attachments |
 
 ### Phase 5 — Inventory
 
@@ -313,6 +369,7 @@ A phase is done only when **all** of the following hold:
 **Deliverables:**
 
 - Carried over from Phase 2 (ADR-025): gapless numbering (`platform.document_sequences`, with the 50-way concurrency test) and the transaction retry decorator.
+- Carried over from Phase 4 (ADR-033): the idempotency filter, store and purge; the Event Publication Registry with `processed_events` and the `org.company.created` seeding pipeline; `platform.money`; numbering prefixes (`GET/PUT {c}/settings/numbering`); OpenAPI with `x-permission`, and the IDOR suite switched to OpenAPI introspection.
 - **Catalog:** UoM categories and units (global seed), product categories (ltree), products, attributes, variants (default variant automation, attribute-combination uniqueness), product UoM conversions with the conversion service, archive rules.
 - Warehouses (seeded default locations), locations (tree, types), reason codes, inventory settings.
 - **Stock engine:**
@@ -345,6 +402,7 @@ A phase is done only when **all** of the following hold:
 
 **Deliverables:**
 
+- Carried over from Phase 4 (ADR-033): **Partners** (partners, addresses, contacts, encrypted bank accounts with masking, reveal and change notification, customer and supplier profiles, partner groups, `pg_trgm` search), the CSV import framework (dry-run, per-row errors) used for partners, and the S3 file port with MinIO in compose.
 - Procurement settings.
 - Requisitions (approval with SoD, conversion to POs).
 - **POs:** pricing, tax computation through Org tax codes and the rounding rules (PRODUCT_SPEC.md G-14), approval thresholds, the state machine, PDF render (async), and optional email to the supplier.
@@ -426,11 +484,10 @@ A phase is done only when **all** of the following hold:
 
 **Deliverables:**
 
-- **HR:**
-  - employees (encrypted sensitive fields, reveal with step-up and audit)
-  - user linking
-  - effective-dated assignments (exclusion constraint)
-  - positions and department heads
+- **HR** (on top of the organizational slice delivered in Phase 4, ADR-033: positions, core employees, effective-dated assignments and department heads):
+  - employees: encrypted sensitive fields (date of birth, national ID), reveal with step-up and audit, personal contact data
+  - user linking (`hr.employees.user_id`)
+  - the `ON_LEAVE` transitions driven by leave
   - leave types, ledger, requests with manager or HR approval, accrual job, public holidays and working-day calculation
   - termination flow (deactivating the user through the Auth facade, and an event)
   - employee documents

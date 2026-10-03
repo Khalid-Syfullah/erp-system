@@ -104,7 +104,7 @@ Constraint names are used to map database errors to API error codes deterministi
   4. Add constraints with `NOT VALID`, then `VALIDATE CONSTRAINT`.
   5. Remove the old shape in a later release.
 - Create indexes on large tables with `CREATE INDEX CONCURRENTLY`, in separate non-transactional migrations.
-- **Reference and seed data** (currencies, countries, permissions, system roles, UoMs) is loaded by repeatable migrations (`R__seed_<module>_<name>.sql`, e.g. `R__seed_org_currencies.sql`) that are idempotent (`INSERT … ON CONFLICT DO UPDATE`). Permissions are additionally synced from code at startup (SECURITY.md §4.2).
+- **Reference and seed data** (currencies, countries, permissions, system roles, UoMs) is loaded by repeatable migrations (`R__seed_<module>_<name>.sql`, e.g. `R__seed_org_currencies.sql`) that are idempotent (`INSERT … ON CONFLICT DO UPDATE`). The permission catalogue and system roles are seeded from SECURITY.md the same way, and a test keeps code, document and database in step (ADR-030).
 - jOOQ code is generated from a Testcontainers PostgreSQL migrated by Flyway. This happens in the Gradle build, and the generated code is not committed.
 - **How migrations run** (implemented in Phase 2):
   1. Once per database, an administrator applies `infra/db/bootstrap/00-roles.sql` (roles, database grants) and sets the login passwords from the secret manager.
@@ -329,8 +329,12 @@ org.branches (id, company_id C, code text NOT NULL, name text NOT NULL, address�
   UNIQUE (company_id, code))
 
 org.departments (id, company_id C, code, name, parent_id uuid NULL → departments (company_id, parent_id),
-  branch_id uuid NULL → branches, is_active, + std,
-  UNIQUE (company_id, code))   -- trigger prevents parent cycles
+  branch_id uuid NULL → branches (company_id, branch_id), is_active, + std,
+  UNIQUE (company_id, code), CHECK (parent_id <> id))
+  -- trg_departments__no_cycle (org.guard_department_cycle): walks the ancestors of the new parent and raises
+  -- check_violation ck_departments__no_cycle; serialized per company with an advisory lock (§9).
+  -- Rules in the service (PRODUCT_SPEC.md §4.2): parent and branch active for new or moved departments;
+  -- deactivation needs no active sub-departments and no downstream use (OrganizationUsage port, ADR-034).
 
 org.exchange_rates (
   id, company_id C, currency_code char(3) → currencies, rate_date date NOT NULL,
@@ -1058,6 +1062,11 @@ erDiagram
 ```
 
 ```sql
+-- Phase 4 (ADR-033) created positions, employees (core columns only), employment_assignments and
+-- department_heads. user_id, the personal and encrypted columns, bank accounts, documents and leave
+-- follow in Phase 9. Phase 4 additions: UNIQUE (company_id, work_email) WHERE work_email IS NOT NULL
+-- (uq_employees__company_id_work_email); employment_type NOT NULL DEFAULT 'FULL_TIME';
+-- CHECK (manager_employee_id <> employee_id); employee_number ~ '^[A-Z0-9_-]{1,30}$'.
 hr.employees (id, company_id C, employee_number text NOT NULL,
   user_id uuid NULL UNIQUE → auth.users,
   first_name, last_name text NOT NULL, preferred_name text NULL,
@@ -1296,7 +1305,7 @@ System postings (event listeners) use exactly the same sequence inside the publi
 - `platform.guard_posted_document()`: attached to `sales.invoices`, `procurement.supplier_bills`, `accounting.payments`, `accounting.expenses` and `payroll.payroll_runs`. It rejects changes to financial columns once `status` is in the module's "posted" set. The allowed transitions are `payments POSTED→VOIDED`, `expenses POSTED→REVERSED` and `payroll_runs POSTED→PAID`.
 - `admin.guard_audit_append_only()` on `admin.audit_log`.
 - `org.guard_company_base_currency()`: blocks a change of `base_currency` once the company has a posted journal entry. Because org must not read accounting tables, this is **checked in the application** through `AccountingFacade.hasPostings(companyId)`, exposed to org through a port that Accounting implements. The trigger version is intentionally not used, to respect boundaries.
-- Tree cycle guards (`org.departments`, `accounting.accounts`, `inventory.product_categories`, `inventory.locations`).
+- Tree cycle guards (`org.departments` since Phase 4; `accounting.accounts`, `inventory.product_categories`, `inventory.locations` later). Each walks the ancestors of the new parent after taking a per-company advisory lock, and raises `check_violation` with the constraint name `ck_<table>__no_cycle`.
 
 ---
 
@@ -1315,6 +1324,10 @@ System postings (event listeners) use exactly the same sequence inside the publi
 | Edit draft document | Optimistic version check | Concurrent edits get 409. |
 | Fulfil order line (delivery / receipt / invoice) | Order header `FOR UPDATE` (serializes fulfilment per order) → lines | Prevents two deliveries from over-delivering the same line. |
 | Payroll run calculate/approve | Run row `FOR UPDATE`; status `CALCULATING` acts as a mutex | |
+| Deactivate a branch, department, position, tax code or payment terms | The row `FOR NO KEY UPDATE` → usage checks (own tables, then the `OrganizationUsage` ports, ADR-034) → update | A new use takes the row `FOR SHARE` first (`OrgFacade.branchForUse` / `departmentForUse`, HR's position lock), so the two serialize and neither sees stale state. |
+| Create or move a department | Department `FOR NO KEY UPDATE` → new parent and branch `FOR SHARE` → trigger: `pg_advisory_xact_lock(hashtext('org.departments'), hashtext(company_id))` | Two crossing moves may deadlock; one is aborted (`409 RESOURCE_BUSY`). Neither order leaves a cycle. |
+| Create or change an employment assignment | Employee `FOR NO KEY UPDATE` → branch, department, position, manager `FOR SHARE` → for reporting lines `pg_advisory_xact_lock(hashtext('hr.reporting_lines'), hashtext(company_id))` → overlap check → insert/update | The exclusion constraint `ex_employment_assignments__no_overlap` backs the overlap check (`409 ASSIGNMENT_OVERLAP`). |
+| Terminate an employee | Employee `FOR NO KEY UPDATE` → end assignments and headships → status | Refused while later assignments or headships, or reports after the date, exist. |
 | Disable or demote a system administrator | Target `auth.users` row `FOR UPDATE` → `pg_advisory_xact_lock(UserRepository.SYSTEM_ADMIN_SET_LOCK)` → count active administrators | The advisory lock serializes changes to the administrator set, so two administrators disabling each other cannot leave none (`409 LAST_SYSTEM_ADMIN`). Locking all administrator rows instead would deadlock against the already-locked targets. |
 | Log in, change password | `auth.users` row `FOR UPDATE` | Serializes failure counters and lockout per user. |
 | Complete MFA / redeem invitation or reset token | `auth.login_challenges` or `auth.user_tokens` row `FOR UPDATE` → `auth.users` row `FOR UPDATE` | A challenge or token is used at most once; attempts are counted exactly. |
@@ -1328,6 +1341,7 @@ Deadlock handling: the retry policy in ARCHITECTURE.md §6.2. `lock_timeout = '5
 - Parallel payment allocations never over-settle an open item.
 - Posting during a period close either completes before the close or fails with `PERIOD_CLOSED`.
 - Two system administrators disabling each other concurrently leave exactly one (`UserAdministrationIntegrationTest`, Phase 3).
+- Crossing department moves never form a cycle; concurrent overlapping assignments of one employee leave exactly one (Phase 4).
 
 ---
 

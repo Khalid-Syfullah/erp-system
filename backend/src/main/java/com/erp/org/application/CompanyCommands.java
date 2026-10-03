@@ -34,6 +34,8 @@ public record CompanyCommands() {
             @Nullable String city,
             @Nullable String region,
             @Nullable String postalCode,
+            String roundingMode,
+            String taxRounding,
             String status) {}
 
     /** Complete updatable state of a branch. */

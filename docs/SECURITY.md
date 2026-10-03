@@ -174,7 +174,7 @@ The "Key permissions" column lists roles' permissions by pattern. The exact perm
 | `AP_CLERK` | `accounting.ap.read`, `procurement.supplier_bill.read/create/post`, `accounting.payment.read/create/post/allocate`, `partners.partner.read`, `partners.partner.read_bank`, `accounting.bank_account.read` |
 | `ACCOUNTANT` | `accounting.*` except `period.close/reopen`, `fiscal_year.close`, `payment.void`, `account_mapping.manage`; plus `accounting.report.read` and read access to Sales and Procurement documents |
 | `FINANCIAL_CONTROLLER` | All `accounting.*`, `procurement.supplier_bill.override_match`, `sales.invoice.create_direct`, `procurement.supplier_bill.create_direct`, `org.exchange_rate.*`, `org.tax_code.*`, `partners.partner.manage_bank` |
-| `HR_OFFICER` | `hr.employee.read/manage`, `hr.position.manage`, `hr.leave.*` |
+| `HR_OFFICER` | `hr.employee.read/manage`, `hr.position.manage`, `hr.leave.*`, `org.branch.read`, `org.department.read` (to place employees in the structure) |
 | `HR_MANAGER` | `HR_OFFICER` + `hr.employee.read_sensitive`, `hr.employee.manage_bank`, `hr.employee.terminate`, `reporting.hr.read` |
 | `PAYROLL_OFFICER` | `payroll.configuration.manage`, `payroll.compensation.*`, `payroll.run.read/prepare`, `payroll.payslip.read`, `hr.employee.read` |
 | `PAYROLL_APPROVER` | `payroll.run.read/approve/post/pay`, `payroll.payslip.read`, `payroll.report.read` |
@@ -203,7 +203,7 @@ It does **not** grant access to company business data. A system admin who needs 
 
 - warehouses, and the stock levels and movements of those warehouses
 - POs, receipts, sales orders, deliveries and invoices (by `branch_id`)
-- employees (by current assignment branch)
+- employees (by the branch of the assignment in effect on the company's business date; employees without a current assignment are visible only with full branch access), employment assignments (by branch). Branch-restricted users create employees only together with an initial assignment in one of their branches. Department heads, positions and departments are company-wide.
 
 Company-wide resources (CoA, partners, products, journal entries) are not branch-filtered. Users who need restricted finance views get roles without the relevant permissions.
 

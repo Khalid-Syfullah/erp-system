@@ -516,6 +516,89 @@ SECURITY.md §5 lists cross-company paths (user administration, global audit, co
 
 - Global administration and business access are separate duties. A system administrator who also works in a company needs an explicit assignment there.
 
+### ADR-033 — Phase 4 delivers organization management, including HR's organizational slice; Partners and platform carry-overs move later (Accepted, Phase 4)
+
+**Context**
+
+The Phase 4 brief asked for organization management:
+
+- companies, branches and departments, with their hierarchy and activation
+- designations / job titles
+- the organizational relationships of employees
+- multi-organization isolation
+
+DEVELOPMENT_PLAN.md's Phase 4 instead combined the rest of Org with Partners, CSV import and several platform pieces:
+
+- the idempotency store
+- the event publication registry and the company-creation seeding pipeline
+- S3 files
+- `platform.money`
+- OpenAPI
+
+DATABASE.md places positions, employees, employment assignments and department heads in the HR module, in Phase 9. The stakeholder chose to:
+
+- do the brief plus the Org reference data that later modules need
+- pull a minimal HR slice forward
+- schedule the remaining items later
+
+**Decision**
+
+- **Org (complete):**
+  - departments (a tree with a cycle guard, optional branch)
+  - exchange rates with the lookup rule, tax codes and payment terms with due-date calculation
+  - the company rounding settings
+  - activation rules for branches and departments
+- **HR, organizational slice:**
+  - `hr.positions` (designations / job titles)
+  - core `hr.employees`: no sensitive personal data and no user link
+  - effective-dated `hr.employment_assignments`: branch, department, position, manager
+  - `hr.department_heads`
+  - the employee status machine, with termination that ends assignments and headships
+
+  Phase 9 adds the rest of HR on the same tables: encrypted personal data with reveal, the user link, bank accounts, documents, leave, self-service, and the termination side effects (user deactivation, payroll event).
+- **"Organization" stays the deployment** (ADR-004, Q-1). "Multi-organization isolation" in the brief is company isolation:
+  - the company comes from the path, and membership is checked (404 otherwise)
+  - RLS and composite company FKs apply on every new table
+  - branch scope applies to employees and assignments
+- **Rescheduled:**
+
+  | Item | Moves to |
+  |---|---|
+  | idempotency store, event publication registry with `processed_events`, the company-creation seeding pipeline, `platform.money`, numbering prefixes (`GET/PUT {c}/settings/numbering`) | Phase 5, their first consumers: posted stock movements, inventory seeders, stock values, document numbers |
+  | OpenAPI with `x-permission` | Phase 5 |
+  | Partners, CSV import, S3 files with MinIO | Phase 6 (Procurement, the first consumer of suppliers and attachments) |
+- **HR roles** gain `org.branch.read` and `org.department.read`, so they can place employees in the structure (SECURITY.md §4.3).
+
+**Consequences**
+
+- HR depends on Org's API only, as ARCHITECTURE.md §5.2 allows. Org learns about HR's use of its units through the `OrganizationUsage` port (ADR-034).
+- Phase 9 keeps its exit criteria; its HR deliverables shrink by this slice.
+
+### ADR-034 — Usage ports and a lock protocol keep organizational relationships consistent across modules (Accepted, Phase 4)
+
+**Context**
+
+PRODUCT_SPEC.md §4.2 forbids deactivating a branch or department that is still in use. HR (and later Inventory) uses Org's units, but Org must not read their tables, and must not depend on them (no cycles). Checking "in use" and "still active" in two different transactions is a write-skew race: a deactivation and a new assignment could each see the other's old state.
+
+**Decision**
+
+- `org.api.OrganizationUsage` is a port that downstream modules implement:
+  - HR reports current or future assignments, active positions and current or future department heads.
+  - Inventory will report active warehouses.
+
+  `org.api.TaxCodeUsage` does the same for tax codes, freezing the rate, scope and exemption of a used code. Its document-module implementations arrive in Phases 6–8.
+- **Lock protocol** (DATABASE.md §9):
+  - A deactivation locks the unit `FOR NO KEY UPDATE`, then asks the ports, then updates.
+  - A new use locks the unit `FOR SHARE` (`OrgFacade.branchForUse` / `departmentForUse`, or the HR position lock), then checks that it is active, then inserts.
+
+  Whichever transaction locks first wins; the other sees its committed result.
+- Rules that span many rows serialize on transaction-scoped advisory locks per company: department moves (inside the cycle-guard trigger) and reporting lines (HR).
+
+**Consequences**
+
+- Deactivation errors list every use (`409 RESOURCE_IN_USE`).
+- Two mutually crossing moves can deadlock. PostgreSQL then aborts one, which is answered with `409 RESOURCE_BUSY` (retryable). Neither order can produce an inconsistent state, and tests cover both outcomes.
+
 ---
 
 ## 2. Requirement conflicts identified and how they were resolved
@@ -534,6 +617,7 @@ SECURITY.md §5 lists cross-company paths (user administration, global audit, co
 | C-10 | Gapless numbering versus concurrency and scalability. | ADR-012, with a measured fallback. |
 | C-11 | HR depends on Auth (user link), and terminating an employee must disable the user, but Auth cannot listen to HR because that would create a cycle. | HR calls `AuthFacade.deactivateUser` synchronously (ARCHITECTURE.md §7). |
 | C-12 | A credit check in Sales needs AR data, which Accounting owns. Accounting depends on Sales events, so a direct call would create a cycle. | Port inversion: Sales defines `CustomerCreditExposurePort`, and Accounting implements it (ARCHITECTURE.md §5.2). |
+| C-13 | The Phase 4 brief asks for organization management including designations and employee relationships (HR tables, Phase 9), while the plan's Phase 4 holds Partners and platform pieces. | ADR-033: Org complete plus an HR organizational slice in Phase 4; Partners, CSV import, files, events, idempotency, money and OpenAPI rescheduled to their first consumers. |
 
 ---
 

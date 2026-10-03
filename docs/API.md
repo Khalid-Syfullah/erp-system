@@ -149,6 +149,9 @@ Master data is never deleted once referenced. It is deactivated with `POST /…/
 | `ACCOUNT_NOT_POSTABLE` / `CONTROL_ACCOUNT_MANUAL_POSTING` | 422 | Account rules |
 | `ACCOUNT_MAPPING_MISSING` | 422 | Account determination failed (`meta.mappingKey`, `meta.scope`) |
 | `EXCHANGE_RATE_MISSING` | 422 | No rate for the currency and date |
+| `DUPLICATE_EXCHANGE_RATE` | 409 | A rate for this currency and date exists |
+| `ASSIGNMENT_OVERLAP` / `DEPARTMENT_HEAD_OVERLAP` | 409 | Effective-dated periods overlap (one assignment per employee, one head per department at a time) |
+| `DUPLICATE_WORK_EMAIL` | 409 | Another employee of the company has this work email |
 | `CREDIT_LIMIT_EXCEEDED` | 422 | Credit check BLOCK |
 | `PARTNER_BLOCKED` / `PARTNER_ON_HOLD` | 422 | Partner restrictions |
 | `QUANTITY_EXCEEDS_REMAINING` | 422 | Over-delivery, over-receipt, over-billing, over-crediting, over-return |
@@ -210,6 +213,7 @@ Response envelope:
   - `isNull` (`true`/`false`)
 - Example: `filter[status][in]=CONFIRMED,PARTIALLY_DELIVERED&filter[orderDate][gte]=2026-01-01&filter[customerId]=0190...`
 - **Only allowlisted fields can be filtered.** Each list endpoint documents its filterable fields. Unknown fields return `400`. Filters are compiled into parameterized jOOQ conditions; string interpolation into SQL is never used.
+- **Effective-dated lists** (employment assignments, department heads) also accept `asOf=yyyy-MM-dd`, which keeps only the rows in effect on that date (`effectiveFrom ≤ asOf ≤ effectiveTo`, open end included).
 
 ### 8.3 Sorting
 
@@ -346,12 +350,12 @@ These endpoints have no company in the path. Their permissions are global and he
 | `GET /api/v1/companies` (accessible) · `GET/PATCH {c}` [A] | membership / `org.company.manage` |
 | `GET {c}/role-assignments` · `POST {c}/role-assignments` `{userId or userEmail, roleId, branchIds?, validFrom?, validTo?}` · `DELETE {c}/role-assignments/{id}` · `GET {c}/roles` (assignable roles) — company administrators; only roles whose permissions the caller holds, never their own assignments | `auth.role_assignment.manage` |
 | `GET/POST {c}/branches` · `GET/PATCH {c}/branches/{id}` [A] · `POST …/{deactivate|activate}` [A] | `org.branch.read` / `org.branch.manage` |
-| `GET/POST {c}/departments` · `GET/PATCH …/{id}` [A] · `POST …/{deactivate|activate}` | `org.department.read` / `org.department.manage` |
+| `GET/POST {c}/departments` (`{code, name, parentId?, branchId?}`; filters `parentId`, `branchId`, `isActive`, `code`) · `GET {c}/departments/tree[?includeInactive=true]` · `GET/PATCH …/{id}` [A] (`name`, `parentId`, `branchId`) · `POST …/{deactivate|activate}` [A] | `org.department.read` / `org.department.manage` |
 | `GET /api/v1/reference/currencies`, `/countries`, `/uoms`, `/uom-categories` | authenticated |
-| `GET/POST {c}/exchange-rates` · `PATCH/DELETE …/{id}` [A] | `org.exchange_rate.read` / `org.exchange_rate.manage` |
-| `GET/POST {c}/tax-codes` · `GET/PATCH …/{id}` [A] · `POST …/{deactivate}` | `org.tax_code.read` / `org.tax_code.manage` |
-| `GET/POST {c}/payment-terms` · `GET/PATCH …/{id}` [A] | `org.payment_terms.read` / `org.payment_terms.manage` |
-| `GET/PUT {c}/settings/numbering` [A] | `org.company.manage` |
+| `GET/POST {c}/exchange-rates` (`{currencyCode, rateDate, rate}`, rate as a decimal string: 1 unit of the currency in base currency; not for the base currency) · `GET …/{id}` · `PATCH …/{id}` [A] (`rate`) · `DELETE …/{id}` [A] · `GET {c}/exchange-rates/lookup?currencyCode=&date=` (latest rate on or before the date; base currency → 1; `422 EXCHANGE_RATE_MISSING`) | `org.exchange_rate.read` / `org.exchange_rate.manage` |
+| `GET/POST {c}/tax-codes` (`{code, name, scope, ratePercent, isExempt?, validFrom?, validTo?}`) · `GET/PATCH …/{id}` [A] (rate, scope and exemption frozen once used: `409 RESOURCE_IN_USE`) · `POST …/{deactivate|activate}` [A] | `org.tax_code.read` / `org.tax_code.manage` |
+| `GET/POST {c}/payment-terms` (`{code, name, dueDays, dueBasis?}`) · `GET/PATCH …/{id}` [A] · `POST …/{deactivate|activate}` [A] · `GET …/{id}/due-date?documentDate=` | `org.payment_terms.read` / `org.payment_terms.manage` |
+| `GET/PUT {c}/settings/numbering` [A] (Phase 5, with document numbering; ADR-033). Company-level settings `roundingMode` and `taxRounding` are part of `PATCH {c}` | `org.company.manage` |
 | `GET {c}/audit-log`, `GET {c}/audit-log?filter[entityType]=…&filter[entityId]=…` | `admin.audit.read` |
 | `GET {c}/jobs/{id}` | job owner or `admin.system.read` |
 | `POST {c}/files` · attachments sub-resources on documents | owning entity permissions |
@@ -453,12 +457,14 @@ These endpoints have no company in the path. Their permissions are global and he
 
 | Method & path | Permission |
 |---|---|
-| `GET/POST {c}/employees` · `GET/PATCH …/{id}` [A] (sensitive fields masked) · `POST …/{id}/reveal` (audit-logged; returns sensitive fields) | `hr.employee.read` / `.manage` / `.read_sensitive` |
+| `GET/POST {c}/employees` (`{employeeNumber, firstName, lastName, preferredName?, workEmail?, hireDate, initialAssignment?}`; responses include `currentAssignment`) · `GET/PATCH …/{id}` [A] (sensitive fields masked; Phase 9) · `POST …/{id}/reveal` (Phase 9; audit-logged; returns sensitive fields) | `hr.employee.read` / `.manage` / `.read_sensitive` |
 | `POST {c}/employees/{id}/{activate|terminate}` [A] `{terminationDate, reason}` | `hr.employee.manage` / `.terminate` |
-| `GET/POST {c}/employees/{id}/assignments` · `PATCH …/assignments/{aid}` [A] | `hr.employee.manage` |
+| `GET {c}/employees/{id}/assignments` · `POST …` (`{branchId, departmentId, positionId?, managerEmployeeId?, employmentType?, fte?, effectiveFrom?, effectiveTo?}`) · `PATCH …/assignments/{aid}` [A] (`positionId`, `managerEmployeeId`, `employmentType`, `fte`, `effectiveTo`) · `DELETE …/assignments/{aid}` [A] (only before it starts) | `hr.employee.read` / `hr.employee.manage` |
+| `GET {c}/employment-assignments?asOf=&filter[departmentId|branchId|positionId|managerEmployeeId|employeeId]=` (the organization on a date) | `hr.employee.read` |
+| `GET/POST {c}/department-heads` (`asOf`, filters) · `GET …/{id}` · `PATCH …/{id}` [A] (`effectiveTo`) | `hr.employee.read` / `hr.employee.manage` |
 | `GET/POST/DELETE {c}/employees/{id}/bank-accounts[/{bid}]` | `hr.employee.manage_bank` |
 | `GET/POST {c}/employees/{id}/documents` | `hr.employee.manage` |
-| `GET/POST {c}/positions` · `PATCH …/{id}` [A] | `hr.position.manage` |
+| `GET/POST {c}/positions` (`{code, title, departmentId?, grade?}`) · `GET/PATCH …/{id}` [A] · `POST …/{deactivate|activate}` [A] | `hr.employee.read` (read) / `hr.position.manage` |
 | `GET/POST {c}/leave-types` · `PATCH …/{id}` [A] | `hr.leave.configure` |
 | `GET/POST {c}/leave-requests` · `POST …/{id}/{submit|approve|reject|cancel}` [A] | `hr.leave.read` / `hr.leave.approve` (or the manager relationship) |
 | `GET {c}/leave-balances?employeeId=` · `POST {c}/leave-ledger/adjustments` [I] | `hr.leave.read` / `hr.leave.adjust` |

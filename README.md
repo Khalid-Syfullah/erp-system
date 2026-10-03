@@ -2,15 +2,14 @@
 
 A production-grade ERP for medium-sized organizations. It is built as a **modular monolith**, with a Java 25 / Spring Boot 4.1 / Spring Modulith / jOOQ backend on PostgreSQL 18, and a React + TypeScript SPA (Phase 11).
 
-**Status:** Phase 3 (authentication and RBAC) is complete:
+**Status:** Phase 4 (organization management) is complete, on top of authentication and RBAC (Phase 3):
 
-- session login with CSRF protection, TOTP MFA, API tokens and step-up
-- invitations and password reset
-- roles and permissions with company and branch scoping
-- company and branch administration
-- the audit log, login protection and rate limits
+- companies, branches and departments (hierarchy, activation rules)
+- exchange rates, tax codes and payment terms
+- positions, core employee records, effective-dated employment assignments with reporting lines, and department heads (HR's organizational slice, ADR-033)
+- company and branch isolation, RBAC on every endpoint, and audit records for every change
 
-Business modules start with Phase 4 (see [docs/DEVELOPMENT_PLAN.md](docs/DEVELOPMENT_PLAN.md)).
+Inventory follows in Phase 5 (see [docs/DEVELOPMENT_PLAN.md](docs/DEVELOPMENT_PLAN.md)).
 
 ## Documentation
 
