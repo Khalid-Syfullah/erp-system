@@ -17,9 +17,11 @@ import org.springframework.security.web.csrf.CsrfException;
 public class ProblemSecurityHandlers implements AuthenticationEntryPoint, AccessDeniedHandler {
 
     private final ProblemResponses problems;
+    private final SecurityAudit securityAudit;
 
-    public ProblemSecurityHandlers(ProblemResponses problems) {
+    public ProblemSecurityHandlers(ProblemResponses problems, SecurityAudit securityAudit) {
         this.problems = problems;
+        this.securityAudit = securityAudit;
     }
 
     @Override
@@ -36,6 +38,9 @@ public class ProblemSecurityHandlers implements AuthenticationEntryPoint, Access
     @Override
     public void handle(HttpServletRequest request, HttpServletResponse response, AccessDeniedException ex)
             throws IOException {
+        if (ex instanceof CsrfException) {
+            securityAudit.csrfRejected(request, "missing or invalid CSRF token");
+        }
         ApiProblem problem = ex instanceof CsrfException
                 ? problems.problem(
                         PlatformErrorCode.CSRF_INVALID,

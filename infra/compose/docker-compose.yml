@@ -1,12 +1,15 @@
 # Local development infrastructure (ARCHITECTURE.md §8.2).
 #
 #   cp .env.example .env                       # once; set local passwords
-#   docker compose --env-file .env -f infra/compose/docker-compose.yml up -d postgres
+#   docker compose --env-file .env -f infra/compose/docker-compose.yml up -d postgres mailpit
 #   cd backend && ./gradlew bootRun --args='--spring.profiles.active=local'
 #
 # Production-like run of the packaged image (migrate job, then API):
 #   cd backend && ./gradlew bootJar && cd ..
 #   docker compose --env-file .env -f infra/compose/docker-compose.yml --profile app up --build
+#
+# First system administrator (one-shot; idempotent):
+#   docker compose --env-file .env -f infra/compose/docker-compose.yml --profile app run --rm bootstrap-admin
 name: erp
 
 services:
@@ -30,6 +33,14 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    restart: unless-stopped
+
+  # SMTP catcher for invitation and password-reset emails (UI: http://localhost:8025).
+  mailpit:
+    image: axllent/mailpit:v1.27
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
     restart: unless-stopped
 
   migrate:
@@ -59,6 +70,13 @@ services:
       ERP_DB_APP_USER: ${ERP_DB_APP_USER:-erp_app}
       ERP_DB_APP_PASSWORD: ${ERP_DB_APP_PASSWORD:?}
       ERP_API_CURSOR_SIGNING_KEY: ${ERP_API_CURSOR_SIGNING_KEY:?set ERP_API_CURSOR_SIGNING_KEY in .env (openssl rand -base64 48)}
+      ERP_FIELD_ENCRYPTION_KEYS: ${ERP_FIELD_ENCRYPTION_KEYS:?set ERP_FIELD_ENCRYPTION_KEYS in .env (1:<openssl rand -base64 32>)}
+      ERP_SECURITY_ALLOWED_ORIGINS: ${ERP_SECURITY_ALLOWED_ORIGINS:-http://localhost:5173}
+      ERP_AUTH_PUBLIC_BASE_URL: ${ERP_AUTH_PUBLIC_BASE_URL:-http://localhost:5173}
+      ERP_MAIL_HOST: mailpit
+      ERP_MAIL_PORT: "1025"
+      ERP_MAIL_STARTTLS: "false"
+      ERP_JOBS_ENABLED: "true"
     ports:
       - "127.0.0.1:8080:8080"
       - "127.0.0.1:8081:8081"
@@ -68,6 +86,24 @@ services:
     read_only: true
     tmpfs: [/tmp]
     restart: unless-stopped
+
+  bootstrap-admin:
+    profiles: ["app"]
+    image: erp-backend:local
+    environment:
+      SPRING_PROFILES_ACTIVE: prod,bootstrap-admin
+      ERP_DB_URL: jdbc:postgresql://postgres:5432/erp
+      ERP_DB_APP_USER: ${ERP_DB_APP_USER:-erp_app}
+      ERP_DB_APP_PASSWORD: ${ERP_DB_APP_PASSWORD:?}
+      ERP_BOOTSTRAP_ADMIN_EMAIL: ${ERP_BOOTSTRAP_ADMIN_EMAIL:?set ERP_BOOTSTRAP_ADMIN_EMAIL in .env}
+      ERP_BOOTSTRAP_ADMIN_PASSWORD: ${ERP_BOOTSTRAP_ADMIN_PASSWORD:?set ERP_BOOTSTRAP_ADMIN_PASSWORD in .env}
+      ERP_BOOTSTRAP_ADMIN_DISPLAY_NAME: ${ERP_BOOTSTRAP_ADMIN_DISPLAY_NAME:-}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs: [/tmp]
+    restart: "no"
 
 volumes:
   pgdata:

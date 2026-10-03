@@ -120,7 +120,7 @@ JPA's dirty checking, lazy loading and flush ordering hide these.
 
 **Decision**
 
-- Browser sessions use Spring Session JDBC with a `__Host-` HttpOnly cookie and CSRF tokens.
+- Browser sessions are server-side rows (`auth.sessions`, ADR-028; originally planned with Spring Session JDBC) behind a `__Host-` HttpOnly cookie, with CSRF tokens.
 - Integrations use bearer API tokens with a prefix, SHA-256 hash, expiry and scopes.
 - There are no JWTs.
 
@@ -255,9 +255,9 @@ Products, partners, categories, tax codes and the CoA belong to one company. UoM
 
 | Need | Implementation |
 |---|---|
-| Sessions | Spring Session JDBC |
+| Sessions | `auth.sessions` table (ADR-028) |
 | Jobs | db-scheduler |
-| Rate limits | Bucket4j on PostgreSQL |
+| Rate limits | Authentication: counters in PostgreSQL; general API: per-instance windows (ADR-029) |
 | Outbox | Modulith Event Publication Registry |
 | Search | pg_trgm |
 
@@ -408,6 +408,113 @@ jOOQ code generation (ADR-003) needs a migrated PostgreSQL, which `generateJooq`
 
 - Image builds always follow a Gradle build. CI does this.
 - Generated sources are never committed and cannot drift from the migrations.
+
+### ADR-028 — Browser sessions in an application-owned `auth.sessions` table instead of Spring Session JDBC (Accepted, Phase 3; amends ADR-006)
+
+**Context**
+
+ADR-006 and SECURITY.md §3.3 named Spring Session JDBC. Phase 3 needs per-session state that Spring Session does not model: `authenticated_at`, `reauthenticated_at` (step-up), `mfa_verified`, `mfa_enrollment_required` and an absolute expiry. It also needs listing and revoking sessions by user, a cap of 5 concurrent sessions, rotation on password change and step-up, and deletion when a user is disabled. With Spring Session, all of that lives in serialized attributes and `PRINCIPAL_NAME` lookups. The API is stateless apart from this cookie (`SessionCreationPolicy.STATELESS`), so the `HttpSession` integration brings nothing.
+
+**Decision**
+
+- `auth.sessions` holds one row per session: `token_hash` (SHA-256 of the cookie secret), user, timestamps, step-up and MFA flags, IP and user agent.
+- The cookie `__Host-erp_session` carries a 256-bit random secret (base64url, 43 characters). Only its hash is stored, so a database read does not yield usable cookies.
+- `AuthRequestAuthenticator` (implementing the platform's `RequestAuthenticator` port) resolves the cookie on every request. It enforces the idle timeout (30 minutes) and the absolute timeout (12 hours), and updates `last_seen_at` at most once per minute.
+- "Rotation" issues a new secret for the same session row (password change, step-up). Login and MFA completion always create a new session, so fixation is impossible.
+- The MFA challenge between the password and TOTP steps is a separate row in `auth.login_challenges` (cookie `__Host-erp_mfa`, 5 minutes, 5 attempts).
+
+**Consequences**
+
+- There are no `spring_session*` tables and no Spring Session dependency.
+- The behaviour in SECURITY.md §3.3 is unchanged and covered by `SessionLifecycleIntegrationTest`.
+- One indexed lookup by `token_hash` per request.
+
+### ADR-029 — Rate limiting: database-backed counters for authentication, per-instance windows for the general API (Accepted, Phase 3)
+
+**Context**
+
+ARCHITECTURE.md and SECURITY.md §9 planned Bucket4j with a PostgreSQL backend. Two kinds of limits exist:
+
+- authentication limits (login per account and per IP, password-reset requests, token redemption), which an attacker targets across instances
+- general per-user and per-token request budgets, which protect capacity
+
+Bucket4j's PostgreSQL proxy adds a dependency and a row lock per request for the second kind. For the first kind, the records already exist (`auth.login_attempts` is mandatory for audit and lockout).
+
+**Decision**
+
+- **Authentication limits** count rows over a sliding window in PostgreSQL, so they are shared by all instances:
+  - logins count `auth.login_attempts` by email hash and by IP (5 and 20 per minute)
+  - password-reset requests and token redemptions count `auth.throttle_events` (hashed subject, written in their own transaction so that a failing request still counts)
+- **General API budgets** (session user 600/min, token 1,200/min or per-token, anonymous 300/min per IP) use an in-memory fixed one-minute window per instance (`FixedWindowRateLimiter`), with IETF `RateLimit-*` headers and `Retry-After`. With N instances the effective budget is up to N times higher. The load balancer limits in SECURITY.md §9 remain the coarse outer layer.
+- "burst 100" is not modelled. A fixed window allows at most twice the budget across a window boundary.
+
+**Consequences**
+
+- No Bucket4j dependency. If budgets need to be exact across instances later (for example, metered integrations), the `FixedWindowRateLimiter` can be swapped for a shared store behind the same filter.
+- Report-export and upload limits arrive with those features (Phases 4 and 10).
+
+### ADR-030 — The permission catalogue is seeded from SECURITY.md by a repeatable migration and verified by a test (Accepted, Phase 3)
+
+**Context**
+
+DEVELOPMENT_PLAN.md said "permission catalogue sync from code". Syncing at application startup would need DDL/DML rights for `erp_app` on `auth.permissions`, or a startup step running as the migrator. The authoritative list is the table in SECURITY.md §4.2, which also lists permissions for modules that do not exist yet.
+
+**Decision**
+
+- `R__seed_auth_permissions_and_roles.sql` upserts every permission in SECURITY.md §4.2 (with `is_sensitive` by the documented rule) and the 18 system roles of §4.3 with their permissions.
+- Permissions are never deleted. Codes that are no longer listed get `deprecated_at`.
+- System-role permissions are rewritten on every change of the script. Custom roles are left untouched.
+- `PermissionCatalogIntegrationTest` asserts:
+  - the active database catalogue equals SECURITY.md §4.2
+  - the `is_sensitive` flags follow the documented rule
+  - every `@RequiresPermission` code and every `*Permissions` constant is catalogued
+  - the system roles equal §4.3, and none holds a global-only permission
+
+**Consequences**
+
+- Adding a permission means editing SECURITY.md and the seed script in the same change. The test fails otherwise.
+- `auth.role.manage` cannot change system roles (`409 SYSTEM_ROLE_IMMUTABLE`). Deployments customize access with custom roles.
+
+### ADR-031 — Field encryption delivered in Phase 3; keys from the secret manager (Accepted, Phase 3)
+
+**Context**
+
+ADR-025 moved `platform.crypto` to Phase 4 (partner bank accounts). TOTP secrets (SECURITY.md §3.5) are its first consumer and arrive in Phase 3. SECURITY.md §7.3 describes KMS envelope encryption, but the cloud provider is not decided yet (Q-9).
+
+**Decision**
+
+- `FieldEncryptor`: AES-256-GCM, a random 96-bit nonce, stored as `version || nonce || ciphertext+tag`, with AAD `table.column:row_id`, as SECURITY.md §7.2 specifies.
+- Keys come from `ERP_FIELD_ENCRYPTION_KEYS` (`<version>:<base64 32 bytes>[,...]`; the highest version encrypts and every listed version decrypts). In production the variable is required and is delivered by the secret manager.
+- Without keys (local and test profiles only), an ephemeral key is generated with a warning. The `prod` profile refuses to start without keys.
+- KMS unwrapping of DEKs and the background re-encryption job are deferred until the hosting decision (Q-9) and Phase 12. They change only how keys are loaded, not the stored format.
+
+**Consequences**
+
+- Key rotation works now: add a new version, deploy, and old rows remain readable. Re-encrypting old rows is a manual task until the job exists.
+
+### ADR-032 — Global administration model and first administrator bootstrap (Accepted, Phase 3)
+
+**Context**
+
+SECURITY.md §5 lists cross-company paths (user administration, global audit, company creation) as `@GlobalAccess`. A new installation needs its first system administrator without any open registration endpoint.
+
+**Decision**
+
+- **System administrators** (`auth.users.is_system_admin`) hold the global permissions (`AuthPermissions.SYSTEM_ADMIN_GLOBAL`: the global-only ones plus `auth.role_assignment.manage`) only on endpoints without a company in the path (`/admin/**`, `POST /companies`), and only through a session or a token without a company restriction.
+  - They have **no** access to company data without a role assignment in that company (404 like everyone else).
+  - They must use MFA.
+  - The last active system administrator cannot be disabled or demoted (`409 LAST_SYSTEM_ADMIN`), and nobody can disable or demote themselves.
+- `@GlobalAccess` marks the handlers that read company-scoped data across companies (user, role and assignment administration, the global audit log, company creation). It sets `app.global_access` for the transaction after the permission check. It is allowed only together with `@RequiresPermission` (ArchitectureTests, EndpointSecurityMatrixTest). RLS policies that honour it exist only where cross-company reads are part of the design (`admin.audit_log`).
+- **Company administrators** manage role assignments in their company (`{c}/role-assignments`), with these limits:
+  - they may assign or remove only roles whose permissions they hold themselves (`403 PRIVILEGE_ESCALATION`)
+  - they may not change their own assignments (`403 SOD_VIOLATION`)
+  - custom roles may not contain global-only permissions
+- **No self-registration.** Users are created by invitation (`POST /admin/users`, email link) or as service accounts. The first system administrator is created by a one-shot command: profile `bootstrap-admin` with `ERP_BOOTSTRAP_ADMIN_EMAIL` and `ERP_BOOTSTRAP_ADMIN_PASSWORD`. It runs without a web server, is idempotent (it does nothing if an active system administrator exists), applies the password policy, and audits the creation.
+- **Email links** (invitation, password reset) carry the token in the URL fragment (`/reset-password#token=…`), so it never reaches server logs, proxies or the `Referer` header.
+
+**Consequences**
+
+- Global administration and business access are separate duties. A system administrator who also works in a company needs an explicit assignment there.
 
 ---
 

@@ -2,21 +2,34 @@ package com.erp.platform.json;
 
 import tools.jackson.core.JsonParser;
 import tools.jackson.core.JsonToken;
+import tools.jackson.databind.BeanProperty;
 import tools.jackson.databind.DeserializationContext;
+import tools.jackson.databind.ValueDeserializer;
 import tools.jackson.databind.deser.std.StdScalarDeserializer;
 
 /**
  * Reads strings only from JSON strings (no numbers or booleans coerced to text), trims surrounding
  * whitespace and rejects control characters other than tab, line feed and carriage return
- * (API.md §7). NUL in particular is rejected because PostgreSQL text cannot store it.
- *
- * <p>Fields whose exact value matters (passwords, from Phase 3) will need an explicit opt-out from
- * trimming.
+ * (API.md §7). NUL in particular is rejected because PostgreSQL text cannot store it. Fields marked
+ * {@link RawText} keep their exact value (no trimming).
  */
 final class SanitizingStringDeserializer extends StdScalarDeserializer<String> {
 
+    private final boolean trim;
+
     SanitizingStringDeserializer() {
+        this(true);
+    }
+
+    private SanitizingStringDeserializer(boolean trim) {
         super(String.class);
+        this.trim = trim;
+    }
+
+    @Override
+    public ValueDeserializer<?> createContextual(DeserializationContext context, BeanProperty property) {
+        boolean raw = property != null && property.getAnnotation(RawText.class) != null;
+        return raw == !trim ? this : new SanitizingStringDeserializer(!raw);
     }
 
     @Override
@@ -28,7 +41,7 @@ final class SanitizingStringDeserializer extends StdScalarDeserializer<String> {
         if (containsForbiddenCharacter(value)) {
             return context.reportInputMismatch(this, "String contains control characters");
         }
-        return value.strip();
+        return trim ? value.strip() : value;
     }
 
     static boolean containsForbiddenCharacter(String value) {

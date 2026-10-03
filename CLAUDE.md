@@ -26,7 +26,10 @@ The specification in `docs/` is **normative**. Read the relevant documents befor
 ./gradlew build              # codegen (needs Docker) + compile (-Werror) + all tests + bootJar
 ./gradlew test --tests 'com.erp.ArchitectureTests'   # a single test class
 ./gradlew dependencies --write-locks                 # after changing gradle/libs.versions.toml
+./gradlew jacocoTestCoverageVerification             # 80 % line floor on domain/application packages
 ```
 
 - New tables: create them in a new `V<yyyyMMddHHmm>__<module>__<desc>.sql`. Call `platform.setup_module_schema` for a new schema and `platform.enable_company_rls` for every company-scoped table. `RowLevelSecurityIntegrationTest` fails otherwise.
 - jOOQ classes are generated (`com.erp.db.<schema>`) and never committed. A module uses only its own schema package (`ArchitectureTests`).
+- New endpoints are covered automatically by `EndpointSecurityMatrixTest` (anonymous 401, foreign company 404, missing permission 403). New permission codes go into SECURITY.md §4.2 **and** `R__seed_auth_permissions_and_roles.sql`; `PermissionCatalogIntegrationTest` fails otherwise.
+- Integration tests get users, companies, roles and logins from `AuthTestSupport` (`auth.user()`, `auth.company()`, `auth.assign(...)`, `auth.login(...)`; unsafe requests need `AuthTestSupport.unsafe(...)` for CSRF and Origin).

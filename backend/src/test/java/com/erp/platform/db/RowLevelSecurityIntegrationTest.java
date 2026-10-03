@@ -32,7 +32,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 class RowLevelSecurityIntegrationTest extends IntegrationTest {
 
     /** Tables documented as intentionally not RLS-protected although they carry company_id (DATABASE.md §3). */
-    private static final Set<String> EXEMPT = Set.of("auth.role_assignments", "auth.role_assignment_branches");
+    private static final Set<String> EXEMPT =
+            Set.of("auth.role_assignments", "auth.role_assignment_branches", "auth.api_tokens");
 
     @Autowired
     DSLContext dsl;
@@ -63,7 +64,7 @@ class RowLevelSecurityIntegrationTest extends IntegrationTest {
                     FROM pg_class c
                     JOIN pg_namespace n ON n.oid = c.relnamespace
                     JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'company_id' AND NOT a.attisdropped
-                    WHERE c.relkind IN ('r', 'p') AND n.nspowner = 'erp_owner'::regrole
+                    WHERE c.relkind IN ('r', 'p') AND NOT c.relispartition AND n.nspowner = 'erp_owner'::regrole
                     """);
             while (rs.next()) {
                 String table = rs.getString(1);
@@ -78,7 +79,29 @@ class RowLevelSecurityIntegrationTest extends IntegrationTest {
                         .isTrue();
             }
         }
-        assertThat(checked).contains("org.branches");
+        assertThat(checked).contains("org.branches", "admin.audit_log");
+    }
+
+    /** Partitions are reached only through their RLS-protected parent: no direct grants. */
+    @Test
+    void partitionsOfCompanyScopedTablesAreNotDirectlyAccessible() throws SQLException {
+        try (Connection c = TestDatabase.superuserConnection(TestDatabase.DATABASE);
+                Statement s = c.createStatement()) {
+            ResultSet rs = s.executeQuery("""
+                    SELECT n.nspname || '.' || c.relname,
+                           has_table_privilege('erp_app', c.oid, 'SELECT'),
+                           has_table_privilege('erp_app', c.oid, 'INSERT')
+                    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE c.relispartition AND n.nspowner = 'erp_owner'::regrole
+                    """);
+            int partitions = 0;
+            while (rs.next()) {
+                partitions++;
+                assertThat(rs.getBoolean(2)).as("SELECT on " + rs.getString(1)).isFalse();
+                assertThat(rs.getBoolean(3)).as("INSERT on " + rs.getString(1)).isFalse();
+            }
+            assertThat(partitions).isGreaterThanOrEqualTo(12);
+        }
     }
 
     @Test

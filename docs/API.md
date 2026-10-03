@@ -118,9 +118,19 @@ Master data is never deleted once referenced. It is deactivated with `POST /…/
 | `BAD_REQUEST` | 400 | Malformed request |
 | `VALIDATION_FAILED` | 422 | One or more field errors (`errors[]`); also database CHECK/NOT NULL/FK violations on input |
 | `UNAUTHENTICATED` | 401 | No valid session or token |
+| `INVALID_CREDENTIALS` | 401 | Login failed. One generic answer for a wrong password, unknown email, and locked, disabled or invited accounts |
 | `MFA_REQUIRED` | 401 | Password accepted; TOTP step required |
+| `INVALID_MFA_CODE` | 401 | Wrong, replayed or expired second factor |
+| `INVALID_TOKEN` | 400 | Invitation or reset token unknown, used or expired |
 | `FORBIDDEN` | 403 | Missing permission |
-| `SOD_VIOLATION` | 403 | Segregation of duties (the approver created the document) |
+| `SOD_VIOLATION` | 403 | Segregation of duties (the approver created the document; changing one's own role assignments) |
+| `PRIVILEGE_ESCALATION` | 403 | Assigning, removing or scoping a role with permissions the caller does not hold |
+| `REAUTHENTICATION_REQUIRED` | 403 | Step-up needed: confirm the password (`POST /me/reauthenticate`) and retry within 5 minutes |
+| `MFA_ENROLLMENT_REQUIRED` | 403 | MFA is mandatory for this user; the session may only enroll TOTP |
+| `MFA_MANDATORY` / `MFA_NOT_ENROLLED` | 409 | MFA cannot be disabled for this user / there is no MFA to disable or regenerate |
+| `LAST_SYSTEM_ADMIN` | 409 | The last active system administrator cannot be disabled or demoted |
+| `SYSTEM_ROLE_IMMUTABLE` | 409 | System roles cannot be edited or deleted |
+| `DUPLICATE_ASSIGNMENT` | 409 | The user already has this role in this company |
 | `CSRF_INVALID` | 403 | Missing or invalid CSRF token |
 | `NOT_FOUND` | 404 | Not found or not visible |
 | `VERSION_CONFLICT` | 409 | Optimistic lock failure |
@@ -255,7 +265,9 @@ The full specification is in SECURITY.md §3.
 
 - **Browser SPA:** session cookie `__Host-erp_session` (HttpOnly, Secure, SameSite=Lax, Path=/). Every unsafe method needs the CSRF header `X-CSRF-Token`, whose value comes from the `XSRF-TOKEN` cookie that `GET /api/v1/auth/csrf` returns.
 - **Integrations:** `Authorization: Bearer erp_pat_<prefix>_<secret>` (personal or service tokens). CSRF does not apply to bearer-authenticated requests. Cookies are ignored on such requests.
-- Requests with neither credential reach only `@PublicEndpoint` routes: login, password reset, invite acceptance and CSRF bootstrap. Health probes live on the separate management port. In Phase 2 no authentication mechanism exists yet, so every other endpoint answers `401`.
+- Requests with neither credential reach only `@PublicEndpoint` routes: login, MFA completion, password forgot and reset, invite acceptance and CSRF bootstrap. Health probes live on the separate management port. Every other endpoint answers `401`.
+- Unsafe cookie-authenticated requests also need an `Origin` (or `Referer`) from the allowed origins.
+- Password fields are taken verbatim (no trimming, `@RawText`) and normalized with NFKC by the server.
 
 ## 13. Rate limiting
 
@@ -294,29 +306,34 @@ Notation: `{c}` = `/api/v1/companies/{companyId}`. **[A]** = requires `If-Match`
 | Method & path | Purpose | Permission |
 |---|---|---|
 | `GET /api/v1/auth/csrf` | Issue a CSRF token cookie | public |
-| `POST /api/v1/auth/login` `{email, password}` | Start a session. Returns `200 {user, mfaRequired:false}`, or `401 MFA_REQUIRED` with a short-lived MFA challenge cookie | public, rate-limited |
-| `POST /api/v1/auth/login/mfa` `{code}` or `{recoveryCode}` | Complete MFA | MFA challenge |
-| `POST /api/v1/auth/logout` | Destroy the session | authenticated |
+| `POST /api/v1/auth/login` `{email, password}` | Start a session. Returns `200 {user, mfaEnrollmentRequired, sessionExpiresAt}` with the session cookie and a new CSRF token, or `401 MFA_REQUIRED` with a short-lived MFA challenge cookie, or `401 INVALID_CREDENTIALS`, or `429 RATE_LIMITED` | public, rate-limited, CSRF-protected |
+| `POST /api/v1/auth/login/mfa` `{code}` or `{recoveryCode}` | Complete MFA (challenge cookie, 5 minutes, 5 attempts) | public + MFA challenge cookie |
+| `POST /api/v1/auth/logout` | Destroy the session; `204` and the cookie is cleared | authenticated |
 | `POST /api/v1/auth/password/forgot` `{email}` | Always `202` (no enumeration) | public, rate-limited |
-| `POST /api/v1/auth/password/reset` `{token, newPassword}` | | public |
-| `POST /api/v1/auth/invitations/accept` `{token, password}` | | public |
-| `GET /api/v1/me` | Profile, accessible companies (with branch scope), and effective permissions per company | authenticated |
-| `PATCH /api/v1/me` | Display name, locale, timezone | authenticated |
-| `POST /api/v1/me/password` `{currentPassword, newPassword}` | Change password (rotates the session) | authenticated |
-| `POST /api/v1/me/mfa/totp/setup` → `{otpauthUri}`; `POST /api/v1/me/mfa/totp/confirm {code}` → recovery codes; `DELETE /api/v1/me/mfa/totp` (requires password re-auth) | MFA management | authenticated |
-| `GET /api/v1/me/sessions`; `DELETE /api/v1/me/sessions/{id}` | Own sessions | authenticated |
-| `GET/POST /api/v1/me/api-tokens`; `DELETE /api/v1/me/api-tokens/{id}` | Personal tokens. The secret is shown once | `auth.api_token.manage_own` |
+| `POST /api/v1/auth/password/reset` `{token, newPassword}` | `204`; ends all sessions of the user | public, rate-limited |
+| `POST /api/v1/auth/invitations/accept` `{token, password}` | `204`; the account becomes ACTIVE | public, rate-limited |
+| `GET /api/v1/me` | `{user, mfaRequired, mfaEnrollmentRequired, companies[{id, code, displayName, permissions, branchScope}]}` (`branchScope` null = all branches) | authenticated |
+| `PATCH /api/v1/me` (merge patch) | Display name, locale, timezone | authenticated |
+| `GET /api/v1/companies` | Companies the caller has a valid assignment in (an API token: its company only, if restricted) | authenticated |
+| `POST /api/v1/me/password` `{currentPassword, newPassword}` | Change password: `204`, rotates this session, ends all others | browser session |
+| `POST /api/v1/me/reauthenticate` `{password}` | Step-up (SECURITY.md §3.3): `204`, rotates the session; valid for 5 minutes | browser session |
+| `POST /api/v1/me/mfa/totp/setup` → `{secret, otpauthUri}`; `POST /api/v1/me/mfa/totp/confirm {code}` → `{recoveryCodes}`; `DELETE /api/v1/me/mfa/totp` (step-up); `POST /api/v1/me/mfa/recovery-codes` (step-up) → new codes | MFA management | browser session |
+| `GET /api/v1/me/sessions`; `DELETE /api/v1/me/sessions/{id}` | Own sessions (the current one is flagged) | browser session |
+| `GET /api/v1/me/api-tokens`; `POST /api/v1/me/api-tokens` `{name, expiresInDays?, companyId?, allowedPermissions?, rateLimitPerMinute?}` → `201 {metadata, token}` (step-up); `DELETE /api/v1/me/api-tokens/{id}` | Personal tokens. The secret is shown once. Creation needs `auth.api_token.manage_own` in at least one company (checked by the service, because `/me` has no company context) | authenticated |
 
 ### 17.2 Administration (global)
 
+These endpoints have no company in the path. Their permissions are global and held by system administrators only (ADR-032); the ones that read company-scoped data across companies are `@GlobalAccess`. Settings, retention policies and system health are not implemented yet (they arrive with their first consumers; see DEVELOPMENT_PLAN.md Phase 3).
+
 | Method & path | Permission |
 |---|---|
-| `GET/POST /api/v1/admin/users`, `GET/PATCH /api/v1/admin/users/{id}` [A] | `auth.user.read` / `auth.user.manage` |
-| `POST /api/v1/admin/users/{id}/{disable|enable|unlock|reset-mfa|resend-invite|revoke-sessions}` [A] | `auth.user.manage` |
-| `GET/POST/DELETE /api/v1/admin/users/{id}/role-assignments` | `auth.role_assignment.manage` |
-| `GET/POST /api/v1/admin/roles`, `GET/PATCH/DELETE /api/v1/admin/roles/{id}` [A]; `PUT /api/v1/admin/roles/{id}/permissions` [A] | `auth.role.read` / `auth.role.manage` |
+| `GET/POST /api/v1/admin/users` (`POST {email, displayName, isSystemAdmin?}` creates an INVITED user and emails the invitation), `GET/PATCH /api/v1/admin/users/{id}` [A] (`displayName`, `locale`, `timezone`, `isSystemAdmin`; email changes are not supported yet) | `auth.user.read` / `auth.user.manage` |
+| `POST /api/v1/admin/users/{id}/{disable|enable|unlock|reset-mfa|resend-invite}` [A] → `200` user · `POST /api/v1/admin/users/{id}/revoke-sessions` → `204` (no version change, no If-Match) | `auth.user.manage` |
+| `GET /api/v1/admin/users/{id}/role-assignments` · `POST …` `{companyId, roleId, branchIds?, validFrom?, validTo?}` · `DELETE …/{assignmentId}` | `auth.user.read` / `auth.role_assignment.manage` |
+| `GET/POST /api/v1/admin/roles`, `GET/PATCH/DELETE /api/v1/admin/roles/{id}` [A]; `PUT /api/v1/admin/roles/{id}/permissions` [A] (custom roles only) | `auth.role.read` / `auth.role.manage` |
 | `GET /api/v1/admin/permissions` | `auth.role.read` |
-| `GET/POST /api/v1/admin/service-accounts`, `POST /api/v1/admin/service-accounts/{id}/api-tokens`, `DELETE …/api-tokens/{tokenId}` | `auth.service_account.manage` |
+| `GET/POST /api/v1/admin/service-accounts`, `GET/POST /api/v1/admin/service-accounts/{id}/api-tokens`, `DELETE …/api-tokens/{tokenId}` | `auth.service_account.manage` |
+| `GET /api/v1/admin/companies` (all companies, including inactive) | `org.company.create` |
 | `GET /api/v1/admin/audit-log` (cross-company, system admin) | `admin.audit.read_global` |
 | `GET/PUT /api/v1/admin/settings/{key}` [A]; `GET/PUT /api/v1/admin/retention-policies` | `admin.settings.manage` |
 | `GET /api/v1/admin/system/health` (jobs, event publications, invariant checks) | `admin.system.read` |
@@ -327,6 +344,7 @@ Notation: `{c}` = `/api/v1/companies/{companyId}`. **[A]** = requires `If-Match`
 | Method & path | Permission |
 |---|---|
 | `GET /api/v1/companies` (accessible) · `GET/PATCH {c}` [A] | membership / `org.company.manage` |
+| `GET {c}/role-assignments` · `POST {c}/role-assignments` `{userId or userEmail, roleId, branchIds?, validFrom?, validTo?}` · `DELETE {c}/role-assignments/{id}` · `GET {c}/roles` (assignable roles) — company administrators; only roles whose permissions the caller holds, never their own assignments | `auth.role_assignment.manage` |
 | `GET/POST {c}/branches` · `GET/PATCH {c}/branches/{id}` [A] · `POST …/{deactivate|activate}` [A] | `org.branch.read` / `org.branch.manage` |
 | `GET/POST {c}/departments` · `GET/PATCH …/{id}` [A] · `POST …/{deactivate|activate}` | `org.department.read` / `org.department.manage` |
 | `GET /api/v1/reference/currencies`, `/countries`, `/uoms`, `/uom-categories` | authenticated |

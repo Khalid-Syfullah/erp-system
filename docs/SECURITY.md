@@ -44,39 +44,43 @@ Related: [ARCHITECTURE.md](ARCHITECTURE.md) · [API.md](API.md) · [DATABASE.md]
 
 ### 3.2 Passwords
 
-- **Hashing:** Argon2id via Spring Security `Argon2PasswordEncoder` with parameters **m = 19 MiB, t = 2, p = 1**, a 16-byte salt and a 32-byte hash. These follow the OWASP Password Storage Cheat Sheet minimum. The parameters are configurable. Hashes are **upgraded on successful login** when the parameters change (`upgradeEncoding`).
+- **Hashing:** Argon2id via Spring Security `Argon2PasswordEncoder` (BouncyCastle) with parameters **m = 19 MiB, t = 2, p = 1**, a 16-byte salt and a 32-byte hash. These follow the OWASP Password Storage Cheat Sheet minimum. The parameters are configurable. Hashes are **upgraded on successful login** when the parameters change (`upgradeEncoding`).
 - **Policy** follows NIST SP 800-63B:
   - Minimum length is 12 characters; maximum is 128.
   - All Unicode is allowed. NFKC normalization is applied.
   - There are no composition rules and no periodic expiry.
-  - Passwords are rejected if they appear in the bundled list of the top 100,000 breached passwords, or if they contain the user's email local-part or name.
-  - Optionally, passwords are checked against the HIBP k-anonymity API (`erp.security.password.hibp-check=false` by default, because it is an external call).
+  - Passwords are rejected if they appear in the bundled list of the top 100,000 breached passwords, or if they contain the user's email local-part or name. The bundled file (`auth/breached-passwords.txt`, NCSC list from SecLists, MIT) keeps only the entries of 12 or more characters (about 1,200), because shorter ones fail the length rule anyway. Passwords with fewer than 5 distinct characters are also rejected.
+  - Optionally, passwords are checked against the HIBP k-anonymity API (`erp.security.password.hibp-check=false` by default, because it is an external call). *Not implemented in Phase 3; planned with the production-readiness work (Phase 12).*
 - Changing the password requires the current password. The change rotates the session ID and revokes all **other** sessions and all password-reset tokens.
 - **Password reset and invite tokens:**
   - 32 random bytes (base64url), single-use.
   - Stored as a SHA-256 hash in `auth.user_tokens`.
   - Valid for 30 minutes (reset) or 72 hours (invite).
   - The reset request always returns `202`, whether or not the account exists.
+  - Email links carry the token in the URL fragment (`<public-base-url>/reset-password#token=…`), so it does not reach server logs or `Referer` headers (ADR-032).
+  - A successful reset deletes all of the user's sessions.
 
 ### 3.3 Sessions (browser)
 
-- Sessions are **server-side**, stored by Spring Session JDBC in PostgreSQL (`auth.spring_session`). They are never JWTs for browser sessions. This keeps revocation immediate and avoids storing tokens in browser storage.
-- Session cookie: `__Host-erp_session`, `Secure`, `HttpOnly`, `SameSite=Lax`, `Path=/`, with no `Domain`. The value is a 256-bit random session ID.
-- **Idle timeout** is 30 minutes, configurable per deployment. The **absolute timeout** is 12 hours, after which the user must re-authenticate. The absolute timeout is enforced with a `createdAt` session attribute checked by a filter.
+- Sessions are **server-side** rows in `auth.sessions` (ADR-028). They are never JWTs for browser sessions. This keeps revocation immediate and avoids storing tokens in browser storage.
+- Session cookie: `__Host-erp_session`, `Secure`, `HttpOnly`, `SameSite=Lax`, `Path=/`, with no `Domain`. The value is a 256-bit random secret; the database stores only its SHA-256 hash. (Only the `local` profile, over plain HTTP, drops `Secure` and therefore the `__Host-` prefix.)
+- **Idle timeout** is 30 minutes, configurable per deployment. The **absolute timeout** is 12 hours, after which the user must re-authenticate. The absolute timeout is enforced with the session's `absolute_expires_at`, checked on every request.
 - The session ID is **rotated** on login, MFA completion, password change and privilege elevation, to protect against session fixation.
 - Each user may have at most **5 concurrent sessions**. When the limit is exceeded, the oldest session is invalidated. Users can list and revoke sessions; admins can revoke all of a user's sessions.
-- Disabling or locking a user, or removing all their assignments, invalidates their sessions immediately by deleting them by principal name.
+- Disabling or locking a user, or removing all their assignments, invalidates their sessions immediately by deleting them by user ID. API tokens of a disabled user stop working at the same moment (the user status is checked on every request).
 - **Step-up re-authentication** (password re-entry within the last 5 minutes) is required for:
   - disabling MFA
   - creating API tokens
-  - revealing sensitive fields
-  - changing one's own email
+  - revealing sensitive fields (Phases 4 and 9)
+  - changing one's own email (email changes, with verification of the new address through an `EMAIL_VERIFY` token, are not implemented yet)
+
+  Step-up is `POST /api/v1/me/reauthenticate {password}`. It rotates the session secret. Failed confirmations count against a per-user budget (5 per 15 minutes).
 
 ### 3.4 Login protection
 
 - Login responses are generic (`Invalid email or password`) and take the same time for unknown emails: a dummy Argon2 hash is verified.
 - **Progressive throttling:** see the §9 limits. After **5 consecutive failures**, the account is temporarily locked for 15 minutes (`locked_until`). After 3 such locks within 24 hours, an admin must unlock the account. Locks are audit-logged, and the user is notified by email.
-- Every attempt is recorded in `auth.login_attempts`: email hash, IP, outcome and reason.
+- Every attempt is recorded in `auth.login_attempts`: email hash, IP, outcome and reason. The table is append-only for `erp_app`; a `SECURITY DEFINER` purge function removes rows after 90 days.
 
 ### 3.5 Multi-factor authentication
 
@@ -86,9 +90,9 @@ Related: [ARCHITECTURE.md](ARCHITECTURE.md) · [API.md](API.md) · [DATABASE.md]
 - MFA is **mandatory** for:
   - system admins
   - roles flagged `requires_mfa`: FINANCIAL_CONTROLLER, ACCOUNTANT, AP_CLERK, PAYROLL_OFFICER, PAYROLL_APPROVER, HR_MANAGER and COMPANY_ADMIN by default
-  - any user with permission `*.manage_bank` or `payroll.run.*`
+  - any user holding a permission flagged `is_sensitive` (§4.2), which includes `*.manage_bank` and all `payroll.*`
 
-  A user who has such a role but has not enrolled is forced into enrollment after the password step.
+  A user who has such a role but has not enrolled is forced into enrollment after the password step: the session is restricted (`403 MFA_ENROLLMENT_REQUIRED`) except for `GET /me`, the TOTP setup and confirm endpoints and logout. Users for whom MFA is mandatory cannot disable it (`409 MFA_MANDATORY`); an administrator can reset it (`POST /admin/users/{id}/reset-mfa`).
 - Login flow: password OK → `401 MFA_REQUIRED` + challenge (an HttpOnly cookie valid for 5 minutes, allowing 5 attempts) → `POST /auth/login/mfa` → the session is established.
 
 ### 3.6 API tokens (integrations)
@@ -96,7 +100,8 @@ Related: [ARCHITECTURE.md](ARCHITECTURE.md) · [API.md](API.md) · [DATABASE.md]
 - Format: `erp_pat_<8-char public prefix>_<43-char base64url secret>`, with 256 bits of entropy. The `erp_pat_` prefix is registered with secret-scanning tools.
 - Stored as a SHA-256 hash, plus the prefix for identification. Because the secret is high-entropy, a slow hash is not needed. The secret is shown **once**.
 - Every token has a **mandatory expiry** of at most 365 days and an optional company restriction. It also has an optional `allowed_permissions` set: its effective permissions are the user's permissions **∩** the allowed set.
-- `Authorization: Bearer` is accepted only over TLS. Bearer requests skip CSRF and ignore cookies.
+- `Authorization: Bearer` is accepted only over TLS (terminated at the load balancer, which does not forward plain HTTP). Bearer requests skip CSRF and ignore cookies. A request with an invalid bearer token is `401`; it never falls back to a cookie.
+- Tokens cannot manage passwords, MFA, sessions or step-up: those endpoints require a browser session. Personal tokens need `auth.api_token.manage_own` in at least one company and a recent step-up; service-account tokens are managed by `auth.service_account.manage`.
 - Tokens can be revoked by the owner or an admin. `last_used_at` is updated at most once per minute.
 
 ### 3.7 SSO (future)
@@ -126,7 +131,7 @@ erDiagram
 
 ### 4.2 Permission catalogue (v1)
 
-This is the authoritative list. New permissions require updating this table and the module's `Permissions` class.
+This is the authoritative list. New permissions require updating this table, the module's `Permissions` class and the seed migration `R__seed_auth_permissions_and_roles.sql` (ADR-030); `PermissionCatalogIntegrationTest` checks that all three agree.
 
 | Module | Permissions |
 |---|---|
@@ -157,7 +162,7 @@ The "Key permissions" column lists roles' permissions by pattern. The exact perm
 | Role code | Key permissions |
 |---|---|
 | `COMPANY_ADMIN` | `org.*`, `auth.role_assignment.manage` (within the company), `admin.audit.read`, all `*.settings.manage` |
-| `AUDITOR` | All `*.read` permissions, plus `accounting.report.read`, `admin.audit.read`, `inventory.valuation.read`, `accounting.ar.read`, `accounting.ap.read` — **no** write permissions, **no** `*.read_sensitive` / `read_bank` / payroll |
+| `AUDITOR` | All company-scoped `*.read` permissions (not the global-only `admin.system.read`), plus `accounting.report.read`, `admin.audit.read`, `inventory.valuation.read`, `accounting.ar.read`, `accounting.ap.read` — **no** write permissions, **no** `*.read_sensitive` / `read_bank` / payroll |
 | `WAREHOUSE_CLERK` | `inventory.product.read`, `inventory.stock.read`, `inventory.movement.read/create/post`, `inventory.count.manage`, `procurement.receipt.read/create/post`, `sales.delivery.read/create/post`, `procurement.purchase_order.read`, `sales.order.read` |
 | `INVENTORY_MANAGER` | `WAREHOUSE_CLERK` + `inventory.product.manage`, `inventory.warehouse.manage`, `inventory.adjustment.*`, `inventory.count.post`, `inventory.movement.reverse`, `inventory.valuation.read`, `reporting.inventory.read` |
 | `BUYER` | `partners.partner.read`, `partners.supplier.manage`, `procurement.requisition.*` except approve, `procurement.purchase_order.read/create`, `procurement.receipt.read`, `inventory.product.read`, `inventory.stock.read` |
@@ -189,7 +194,7 @@ It does **not** grant access to company business data. A system admin who needs 
 |---|---|---|---|
 | 1 | Authentication | Spring Security filter chain (session or bearer) | 401 |
 | 2 | Company membership | `CompanyContextInterceptor`: path `{companyId}` → the user has a valid assignment in it (and the API token's company restriction matches) → sets `RequestContext.company`, branch scope and effective permissions | 404 |
-| 3 | Permission | `@RequiresPermission("…")` on every controller method, evaluated by an AOP interceptor against effective permissions. Permissions can be combined (`anyOf`/`allOf`). | 403 (or 404 if the caller lacks even the resource's read permission) |
+| 3 | Permission | `@RequiresPermission("…")` on every controller method that is neither `@PublicEndpoint` nor `@AuthenticatedEndpoint`, evaluated by `EndpointAccessInterceptor` (a Spring MVC interceptor that runs before argument binding) against the effective permissions. Several codes mean all of them are required (`allOf`); `anyOf` is not needed yet. Denials of unsafe methods are audited (`PERMISSION_DENIED`). | 403 (or 404 if the caller lacks even the resource's read permission) |
 | 4 | Data scope | Application queries always include `company_id = :ctx` (the repository base API offers no un-scoped `findById`) plus a branch filter for branch-scoped resources (`branch_id = ANY(:scope)`). Self-service endpoints filter by the linked employee. Manager access filters by the reporting tree. | 404 |
 | 5 | Business authorization | Domain policies: SoD (creator ≠ approver), thresholds (`approve_high`, adjustment value, journal SoD amount), state checks | 403 `SOD_VIOLATION` / 409 / 422 |
 | 6 | Database | RLS by `app.company_id`; composite same-company FKs; `erp_app` role privileges; immutability triggers | 404 / 500 (should never be reached; alert if it is) |
@@ -208,6 +213,7 @@ Company-wide resources (CoA, partners, products, journal entries) are not branch
 - Every lookup is `WHERE company_id = :ctx AND id = :id` (plus the branch filter). A resource from another company or an out-of-scope branch is indistinguishable from a non-existent one (404).
 - Foreign IDs in request bodies (`customerId`, `variantId`, `locationId`, `accountId`, …) are validated as belonging to the active company, and to the user's branch scope where relevant, before use. Composite FKs reject any miss at the database.
 - **Automated test (mandatory from Phase 3):** an `IdorSuiteTest` enumerates every endpoint with a path or body ID, creates fixtures in companies A and B, authenticates as a full-permission user of A only, and asserts a 404 (or 422 for body references) for every B identifier. Every new endpoint is covered automatically by OpenAPI introspection.
+  - *Phase 3 implementation:* `EndpointSecurityMatrixTest` enumerates the registered handler methods (there is no OpenAPI document yet). For every endpoint it asserts 401 for anonymous callers, 404 for a member of company A addressing company B, and 403 for a member without the required permission. `AuthorizationIntegrationTest` adds fixture-based IDOR cases: another company's branch through one's own company path (GET, PATCH, actions), another company's role assignment, and foreign branch IDs in an assignment body (422). Each later module adds its fixture cases.
 
 ### 4.6 Segregation of duties (SoD)
 
@@ -233,7 +239,7 @@ The rules are enforced in domain policies. They are configurable per company onl
   - system-admin global audit search and user administration
   - system jobs
 
-  Each of these code paths is annotated `@GlobalAccess` and allowlisted (DATABASE.md §3).
+  Each of these code paths is annotated `@GlobalAccess` and allowlisted (DATABASE.md §3). `@GlobalAccess` is only valid together with `@RequiresPermission`, and system administrators have no company data access without an assignment (ADR-032).
 - Consolidated multi-company reporting is out of scope for v1. When it is added, it will require an explicit permission and a dedicated read path, and will not weaken RLS.
 - Multi-organization SaaS hosting is **not** supported by this design without adding an `organization_id` tier (DECISIONS.md, Q-1).
 
@@ -293,6 +299,7 @@ The rules are enforced in domain policies. They are configurable per company onl
 - At startup, the application unwraps the active DEK and the previous DEKs (identified by `key_version`), and holds them only in memory.
 - **Rotation:** a new DEK version is used for new writes. A background job re-encrypts old rows in chunks. Old versions are retired once no rows reference them.
 - **Local development** uses a static development key from `.env`, which is never valid outside local environments. A startup check refuses the development key when `prod` is active.
+- *Phase 3 status (ADR-031):* keys are supplied as `ERP_FIELD_ENCRYPTION_KEYS` (`<version>:<base64>[,...]`) from the secret manager; `prod` refuses to start without them, and other profiles generate an ephemeral key with a warning. KMS unwrapping and the re-encryption job are deferred (Q-9, Phase 12).
 
 ### 7.4 Masking, minimization and logs
 
@@ -332,7 +339,9 @@ The rules are enforced in domain policies. They are configurable per company onl
 Limits are enforced in two places:
 
 - **Coarse** limits at the load balancer or WAF, per IP: for example, 100 requests per second with a burst of 200.
-- **Application** limits with Bucket4j, backed by PostgreSQL so that state is shared across instances.
+- **Application** limits (ADR-029):
+  - authentication limits (login, password forgot, token redemption, step-up) count rows in PostgreSQL (`auth.login_attempts`, `auth.throttle_events`), so they are shared across instances
+  - the general session, token and anonymous budgets use an in-memory fixed one-minute window per instance (anonymous requests: 300 per minute per IP)
 
 | Scope | Key | Limit (default, configurable) |
 |---|---|---|
@@ -341,7 +350,7 @@ Limits are enforced in two places:
 | MFA verification | challenge | 5 attempts, then the challenge is invalid |
 | Password forgot | email hash / IP | 3 per hour / 10 per hour |
 | Invitation and reset acceptance | IP | 10 per hour |
-| Authenticated API (session) | user | 600 per minute, burst 100 |
+| Authenticated API (session) | user | 600 per minute (per instance; no separate burst) |
 | API token | token | 1,200 per minute (configurable per token) |
 | Report exports | user | 10 per hour |
 | File uploads | user | 60 per hour |
@@ -387,10 +396,10 @@ The SPA and API are served from the **same origin**, so CORS is **disabled**: no
 
 ### 10.3 CSRF
 
-*Phase 2 status:* the CSRF filter, cookie (`XSRF-TOKEN`, `SameSite=Strict`, `Secure` except in the `local` profile) and header (`X-CSRF-Token`) are active. The `Origin` check, the bearer-token exemption and `GET /api/v1/auth/csrf` arrive with authentication in Phase 3. Spring Boot's default in-memory user is disabled, so no generated password is ever logged.
+*Status (Phase 3):* the CSRF filter, cookie (`XSRF-TOKEN`, `SameSite=Strict`, `Secure` except in the `local` profile), header (`X-CSRF-Token`), the `Origin`/`Referer` check against `erp.security.allowed-origins`, the bearer-token exemption and `GET /api/v1/auth/csrf` are active. Login is CSRF-protected too (against login CSRF), and a successful login issues a new CSRF token. Rejections are audited (`CSRF_REJECTED`). Spring Boot's default in-memory user is disabled, so no generated password is ever logged.
 
 - Spring Security's CSRF protection applies to all cookie-authenticated unsafe methods. The token is delivered in the `XSRF-TOKEN` cookie (readable by JavaScript and `SameSite=Strict`) and must be echoed in the `X-CSRF-Token` header. The token is BREACH-masked.
-- As an additional check, the `Origin` header (or `Referer` when `Origin` is absent) must match the configured public origin on unsafe methods.
+- As an additional check, the `Origin` header (or `Referer` when `Origin` is absent) must match one of the configured origins (`ERP_SECURITY_ALLOWED_ORIGINS`) on unsafe cookie-authenticated methods.
 - Bearer-token requests are exempt, because they are not ambient credentials.
 
 ---

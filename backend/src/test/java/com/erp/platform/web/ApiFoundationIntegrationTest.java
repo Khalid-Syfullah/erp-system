@@ -88,7 +88,7 @@ class ApiFoundationIntegrationTest extends IntegrationTest {
     }
 
     @Test
-    void permissionChecksFailClosedWithoutAuthModule() throws Exception {
+    void permissionChecksFailClosedWithoutAnAuthenticatedActor() throws Exception {
         expectProblem(mvc.perform(get(BASE + "/permission/read").with(user("tester"))), 403, "FORBIDDEN");
     }
 
@@ -97,6 +97,7 @@ class ApiFoundationIntegrationTest extends IntegrationTest {
         expectProblem(
                 mvc.perform(post(BASE + "/echo")
                         .with(user("tester"))
+                        .header("Origin", "http://localhost")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(VALID_ECHO)),
                 403,
@@ -179,6 +180,7 @@ class ApiFoundationIntegrationTest extends IntegrationTest {
                 mvc.perform(post(BASE + "/echo")
                         .with(user("tester"))
                         .with(csrf())
+                        .header("Origin", "http://localhost")
                         .contentType(MediaType.TEXT_PLAIN)
                         .content("hello")),
                 415,
@@ -252,12 +254,16 @@ class ApiFoundationIntegrationTest extends IntegrationTest {
     // ------------------------------------------------------------------ helpers
 
     private MockHttpServletRequestBuilder authenticatedPost(String path) {
-        return post(BASE + path).with(user("tester")).with(csrf()).contentType(MediaType.APPLICATION_JSON);
+        return post(BASE + path)
+                .with(user("tester"))
+                .with(csrf())
+                .header("Origin", "http://localhost")
+                .contentType(MediaType.APPLICATION_JSON);
     }
 
     private MockHttpServletRequestBuilder versioned(String ifMatch) {
         MockHttpServletRequestBuilder request =
-                put(BASE + "/versioned").with(user("tester")).with(csrf());
+                put(BASE + "/versioned").with(user("tester")).with(csrf()).header("Origin", "http://localhost");
         return ifMatch == null ? request : request.header("If-Match", ifMatch);
     }
 

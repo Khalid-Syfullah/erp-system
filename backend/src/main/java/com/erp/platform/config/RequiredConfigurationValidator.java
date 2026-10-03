@@ -35,8 +35,16 @@ public final class RequiredConfigurationValidator implements BeanFactoryPostProc
             new Requirement("spring.flyway.user", "ERP_DB_MIGRATOR_USER"),
             new Requirement("spring.flyway.password", "ERP_DB_MIGRATOR_PASSWORD"));
 
-    static final List<Requirement> PRODUCTION =
-            List.of(new Requirement("erp.api.cursor-signing-key", "ERP_API_CURSOR_SIGNING_KEY"));
+    static final List<Requirement> PRODUCTION = List.of(
+            new Requirement("erp.api.cursor-signing-key", "ERP_API_CURSOR_SIGNING_KEY"),
+            new Requirement("erp.security.allowed-origins", "ERP_SECURITY_ALLOWED_ORIGINS"),
+            new Requirement("erp.crypto.field-encryption-keys", "ERP_FIELD_ENCRYPTION_KEYS"),
+            new Requirement("erp.auth.public-base-url", "ERP_AUTH_PUBLIC_BASE_URL"),
+            new Requirement("spring.mail.host", "ERP_MAIL_HOST"));
+
+    static final List<Requirement> BOOTSTRAP_ADMIN = List.of(
+            new Requirement("erp.auth.bootstrap.admin-email", "ERP_BOOTSTRAP_ADMIN_EMAIL"),
+            new Requirement("erp.auth.bootstrap.admin-password", "ERP_BOOTSTRAP_ADMIN_PASSWORD"));
 
     private Environment environment;
 
@@ -55,11 +63,15 @@ public final class RequiredConfigurationValidator implements BeanFactoryPostProc
         boolean migrationsEnabled = Boolean.parseBoolean(read(env, "spring.flyway.enabled"));
         boolean production = env.acceptsProfiles(Profiles.of("prod"));
         boolean migrateMode = env.acceptsProfiles(Profiles.of("migrate"));
+        boolean bootstrapMode = env.acceptsProfiles(Profiles.of("bootstrap-admin"));
         if (migrationsEnabled) {
             required.addAll(MIGRATIONS);
         }
-        if (production && !migrateMode) {
+        if (production && !migrateMode && !bootstrapMode) {
             required.addAll(PRODUCTION);
+        }
+        if (bootstrapMode) {
+            required.addAll(BOOTSTRAP_ADMIN);
         }
 
         List<String> problems = new ArrayList<>();
@@ -69,7 +81,7 @@ public final class RequiredConfigurationValidator implements BeanFactoryPostProc
         if (!missing.isEmpty()) {
             problems.add("missing required configuration: " + missing);
         }
-        if (production && !migrateMode && migrationsEnabled) {
+        if (production && !migrateMode && !bootstrapMode && migrationsEnabled) {
             problems.add("database migrations must not run on application startup in production;"
                     + " run them as a separate step with the 'migrate' profile (ARCHITECTURE.md §8.2)");
         }

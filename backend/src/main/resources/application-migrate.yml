@@ -12,3 +12,6 @@ spring:
       minimum-idle: 0
   flyway:
     enabled: true
+
+db-scheduler:
+  enabled: false

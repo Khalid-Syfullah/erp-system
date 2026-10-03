@@ -2,7 +2,15 @@
 
 A production-grade ERP for medium-sized organizations. It is built as a **modular monolith**, with a Java 25 / Spring Boot 4.1 / Spring Modulith / jOOQ backend on PostgreSQL 18, and a React + TypeScript SPA (Phase 11).
 
-**Status:** Phase 2 (foundation) is complete. The platform kernel, the database role model with migrations and row-level security, the error model and list conventions, the security skeleton, the org core and reference data, tests, Docker and CI are in place. Authentication arrives in Phase 3. Until then every non-public API endpoint answers `401`.
+**Status:** Phase 3 (authentication and RBAC) is complete:
+
+- session login with CSRF protection, TOTP MFA, API tokens and step-up
+- invitations and password reset
+- roles and permissions with company and branch scoping
+- company and branch administration
+- the audit log, login protection and rate limits
+
+Business modules start with Phase 4 (see [docs/DEVELOPMENT_PLAN.md](docs/DEVELOPMENT_PLAN.md)).
 
 ## Documentation
 
@@ -26,15 +34,22 @@ A production-grade ERP for medium-sized organizations. It is built as a **modula
 ```bash
 cp .env.example .env              # then replace every change-me value (never commit .env)
 
-# PostgreSQL 18 with the ERP roles (first start runs infra/db/bootstrap/00-roles.sql)
-docker compose --env-file .env -f infra/compose/docker-compose.yml up -d postgres
+# PostgreSQL 18 with the ERP roles (first start runs infra/db/bootstrap/00-roles.sql),
+# and Mailpit for invitation and password-reset emails (UI: http://localhost:8025)
+docker compose --env-file .env -f infra/compose/docker-compose.yml up -d postgres mailpit
 
 # Run the API with the "local" profile: migrates on startup, human-readable logs
 cd backend
 ./gradlew bootRun --args='--spring.profiles.active=local'
+
+# Once: create the first system administrator (the command exits when done; idempotent)
+ERP_BOOTSTRAP_ADMIN_EMAIL=admin@example.com ERP_BOOTSTRAP_ADMIN_PASSWORD='<12+ characters, not a common password>' \
+  ./gradlew bootRun --args='--spring.profiles.active=local,bootstrap-admin'
 ```
 
-- API: <http://localhost:8080/api/v1> (for example `/api/v1/reference/currencies`, which returns 401 until Phase 3).
+- API: <http://localhost:8080/api/v1>. Sign in with `GET /api/v1/auth/csrf`, then `POST /api/v1/auth/login` with the `X-CSRF-Token` header and an `Origin` from `ERP_SECURITY_ALLOWED_ORIGINS` (API.md §12). System administrators must enroll TOTP at the first login (`/api/v1/me/mfa/totp/setup` and `/confirm`).
+- Locally, cookies are not `Secure` and the session cookie is `erp_session` (no `__Host-` prefix), so plain `http://localhost` works.
+- Without `ERP_FIELD_ENCRYPTION_KEYS`, the local profile uses an ephemeral key, and MFA enrollments do not survive a restart. Set a key in `.env` to keep them.
 - Health: <http://localhost:8081/actuator/health/readiness> (management port, internal only).
 - Metrics: <http://localhost:8081/actuator/prometheus>.
 
@@ -47,6 +62,7 @@ cd backend
 ./gradlew spotlessCheck                 # lint (formatting); ./gradlew spotlessApply fixes it
 ./gradlew compileJava compileTestJava   # type check (-Xlint:all -Werror), includes jOOQ code generation
 ./gradlew test                          # unit + integration (Testcontainers) + architecture tests
+./gradlew jacocoTestCoverageVerification  # >= 80 % lines in domain/application packages (report: build/reports/jacoco)
 ./gradlew build                         # all of the above + bootJar → build/libs/erp-backend.jar
 ```
 
@@ -59,7 +75,7 @@ Dependencies are locked (`gradle.lockfile`). After changing `gradle/libs.version
 docker compose --env-file .env -f infra/compose/docker-compose.yml --profile app up --build
 ```
 
-The `migrate` service runs the image with `SPRING_PROFILES_ACTIVE=prod,migrate`: it applies Flyway migrations as `erp_migrator` and exits. The `app` service then starts the API with the `prod` profile (ECS JSON logs; `ERP_API_CURSOR_SIGNING_KEY` required). In production, migrations always run as that separate step (ARCHITECTURE.md §8.2).
+The `migrate` service runs the image with `SPRING_PROFILES_ACTIVE=prod,migrate`: it applies Flyway migrations as `erp_migrator` and exits. The `app` service then starts the API with the `prod` profile (ECS JSON logs; `ERP_API_CURSOR_SIGNING_KEY` and `ERP_FIELD_ENCRYPTION_KEYS` required) and sends email through Mailpit. In production, migrations always run as that separate step (ARCHITECTURE.md §8.2). The first administrator is created with `docker compose … --profile app run --rm bootstrap-admin`.
 
 ## Configuration
 
@@ -72,6 +88,13 @@ All configuration comes from environment variables. Secrets have no defaults, an
 | `ERP_DB_MIGRATOR_USER` / `ERP_DB_MIGRATOR_PASSWORD` | Migration role (only where migrations run) |
 | `ERP_DB_MIGRATE_ON_STARTUP` | `true` in `local`/`test`; forbidden in `prod` (use the `migrate` profile) |
 | `ERP_API_CURSOR_SIGNING_KEY` | Base64 key of at least 32 bytes for pagination cursors (required in `prod`) |
+| `ERP_SECURITY_ALLOWED_ORIGINS` | Exact origins of the web app, comma-separated; checked on unsafe cookie requests (required in `prod`) |
+| `ERP_FIELD_ENCRYPTION_KEYS` | `<version>:<base64 32 bytes>[,...]` AES-256-GCM keys for MFA secrets; highest version encrypts (required in `prod`) |
+| `ERP_AUTH_PUBLIC_BASE_URL` | Base URL of the web app for invitation and reset links (required in `prod`) |
+| `ERP_MAIL_HOST`, `ERP_MAIL_PORT`, `ERP_MAIL_USERNAME`, `ERP_MAIL_PASSWORD`, `ERP_MAIL_STARTTLS`, `ERP_MAIL_FROM` | SMTP relay (host required in `prod`; defaults to Mailpit in `local`) |
+| `ERP_JOBS_ENABLED` | `true` on the worker instance(s): audit partitions and security-record purges (default `false`; `true` in `local`) |
+| `ERP_BOOTSTRAP_ADMIN_EMAIL`, `ERP_BOOTSTRAP_ADMIN_PASSWORD`, `ERP_BOOTSTRAP_ADMIN_DISPLAY_NAME` | Only for the one-shot `bootstrap-admin` profile |
+| `ERP_MFA_ISSUER` | Issuer shown in authenticator apps (default `ERP`) |
 | `ERP_DB_POOL_SIZE`, `ERP_DB_STATEMENT_TIMEOUT`, `ERP_DB_LOCK_TIMEOUT` | Tuning (defaults 10, 30s, 5s) |
 | `ERP_HTTP_PORT`, `ERP_MANAGEMENT_PORT` | Ports (defaults 8080, 8081) |
 

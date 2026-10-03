@@ -8,6 +8,7 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noFields;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noMethods;
 
 import com.erp.platform.security.AuthenticatedEndpoint;
+import com.erp.platform.security.GlobalAccess;
 import com.erp.platform.security.PublicEndpoint;
 import com.erp.platform.security.RequiresPermission;
 import com.tngtech.archunit.core.domain.JavaClass;
@@ -111,7 +112,8 @@ class ArchitectureTests {
             .beFinal();
 
     private static ArchCondition<JavaMethod> declareAccessAnnotation() {
-        return new ArchCondition<>("be annotated with @PublicEndpoint, @AuthenticatedEndpoint or @RequiresPermission") {
+        return new ArchCondition<>("be annotated with exactly one of @PublicEndpoint, @AuthenticatedEndpoint or"
+                + " @RequiresPermission (and @GlobalAccess only with @RequiresPermission)") {
             @Override
             public void check(JavaMethod method, ConditionEvents events) {
                 int declared = 0;
@@ -126,6 +128,15 @@ class ArchitectureTests {
                             method,
                             method.getFullName() + " declares " + declared
                                     + " access annotations (exactly 1 required)"));
+                }
+                boolean global = method.isAnnotatedWith(GlobalAccess.class)
+                        || method.getOwner().isAnnotatedWith(GlobalAccess.class);
+                boolean permission = method.isAnnotatedWith(RequiresPermission.class)
+                        || method.getOwner().isAnnotatedWith(RequiresPermission.class);
+                if (global && !permission) {
+                    // Cross-company reads bypass RLS; they are reserved for permission-checked endpoints.
+                    events.add(SimpleConditionEvent.violated(
+                            method, method.getFullName() + " uses @GlobalAccess without @RequiresPermission"));
                 }
             }
         };

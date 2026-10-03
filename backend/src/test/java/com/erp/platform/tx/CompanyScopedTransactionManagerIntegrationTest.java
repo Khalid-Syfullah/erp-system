@@ -5,8 +5,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.erp.platform.context.CurrentContext;
 import com.erp.platform.context.RequestContext;
+import com.erp.platform.security.ActorType;
+import com.erp.platform.security.AuthenticatedActor;
 import com.erp.support.IntegrationTest;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.util.UUID;
 import org.jooq.DSLContext;
 import org.jooq.Record2;
@@ -33,8 +36,10 @@ class CompanyScopedTransactionManagerIntegrationTest extends IntegrationTest {
     void bindsRequestContextToTheTransaction() {
         UUID company = UUID.randomUUID();
         UUID user = UUID.randomUUID();
-        RequestContext context =
-                RequestContext.forRequest("req-12345678").withUser(user).withCompany(company);
+        RequestContext context = RequestContext.forRequest("req-12345678")
+                .withActor(new AuthenticatedActor(
+                        user, ActorType.USER, UUID.randomUUID(), false, Instant.now(), null, null, null, false, null))
+                .withCompany(company);
 
         Record2<String, String> settings = CurrentContext.callWith(
                 context, () -> new TransactionTemplate(transactionManager).execute(status -> readSettings()));

@@ -154,9 +154,10 @@ CREATE POLICY company_isolation ON <t>
 Migrations apply this with `SELECT platform.enable_company_rls('<schema>.<table>')`. `platform.current_company_id()` is a `STABLE` SQL function returning `nullif(current_setting('app.company_id', true), '')::uuid`. `RowLevelSecurityIntegrationTest` scans the catalogue and fails for any table owned by `erp_owner` that has a `company_id` column but no forced `company_isolation` policy (documented exemptions only).
 
 - `app.company_id` is set with `set_config(…, true)` (transaction-local) by `CompanyScopedTransactionManager` at the start of every transaction (ARCHITECTURE.md §6.3). If it is unset, the policy evaluates against NULL and **no rows are visible**: it fails closed.
-- **Global-access code paths**, such as a system admin's cross-company audit search or company-iterating jobs, either iterate companies and set the context per company, or set `app.global_access = 'on'`. Only specific tables have a second policy that honors that flag: `admin.audit_log`, `platform.files` and `reporting.export_jobs`. The flag is set only from code annotated `@GlobalAccess`, which an ArchUnit rule confines to an allowlisted set of classes.
+- **Global-access code paths**, such as a system admin's cross-company audit search or company-iterating jobs, either iterate companies and set the context per company, or set `app.global_access = 'on'`. Only specific tables have a policy that honors that flag: `admin.audit_log` (Phase 3), and later `platform.files` and `reporting.export_jobs`. `platform.global_access()` reads the flag. The audit-log policy is `USING (company_id = current_company_id() OR global_access())` and `WITH CHECK (company_id IS NULL OR company_id = current_company_id() OR global_access())`, because global events such as logins have no company. The flag is set by the transaction manager only for handlers annotated `@GlobalAccess`, after their permission check; an ArchUnit rule and `EndpointSecurityMatrixTest` require every `@GlobalAccess` handler to carry `@RequiresPermission` (ADR-032). Company-scoped tables without such a policy stay invisible even with the flag.
 - These tables are **not company-scoped** (no RLS): `org.companies`, `org.currencies`, `org.countries`, `auth.*` (except `role_assignments`, see below), `inventory.uom_categories`, `inventory.uoms`, and `admin.system_settings`. (`platform.document_sequences` and `platform.files` do have `company_id` and RLS).
-- `auth.role_assignments` has `company_id` but **no RLS**, because a user's assignments across companies must be readable during login. Access goes only through the Auth facade.
+- `auth.role_assignments`, `auth.role_assignment_branches` and `auth.api_tokens` have `company_id` but **no RLS**, because a user's assignments and tokens across companies must be readable during authentication, before any company context exists. Access goes only through the Auth module, whose queries always filter by user or by the company in the request context. `RowLevelSecurityIntegrationTest` lists these exemptions explicitly.
+- Partitions of company-scoped partitioned tables (e.g. `admin.audit_log_202610`) have no privileges for `erp_app`; all access goes through the parent table and its policy.
 - RLS integration tests (Phase 2) must prove that, for every company-scoped table, rows of company B cannot be read or written while the context is company A, including through an FK.
 
 ---
@@ -218,7 +219,7 @@ Solid lines are FKs. Dotted lines are references by event or polymorphic source 
 |---|---|
 | platform | document_sequences, idempotency_keys, processed_events, files, job_runs, event_publication (Spring Modulith), scheduled_tasks (db-scheduler) |
 | org | companies, branches, departments, currencies, countries, exchange_rates, tax_codes, payment_terms |
-| auth | users, user_tokens, mfa_totp, recovery_codes, api_tokens, permissions, roles, role_permissions, role_assignments, role_assignment_branches, login_attempts, spring_session, spring_session_attributes |
+| auth | users, user_tokens, sessions, login_challenges, mfa_totp, recovery_codes, api_tokens, permissions, roles, role_permissions, role_assignments, role_assignment_branches, login_attempts, throttle_events |
 | partners | partner_groups, partners, partner_addresses, partner_contacts, partner_bank_accounts, customers, suppliers |
 | inventory | settings, uom_categories, uoms, product_uom_conversions, product_categories, products, product_attributes, product_attribute_values, product_variants, variant_attribute_values, warehouses, locations, reason_codes, stock_movements, stock_movement_lines, inventory_transactions, stock_balances, warehouse_stock, stock_reservations, item_valuations, stock_counts, stock_count_lines |
 | procurement | settings, purchase_requisitions, purchase_requisition_lines, purchase_orders, purchase_order_lines, goods_receipts, goods_receipt_lines, purchase_returns, purchase_return_lines, supplier_bills, supplier_bill_lines, supplier_bill_taxes |
@@ -385,14 +386,27 @@ auth.users (
 auth.user_tokens (id, user_id → users, purpose text CHECK (IN ('INVITE','PASSWORD_RESET','EMAIL_VERIFY')),
   token_hash bytea NOT NULL UNIQUE, expires_at timestamptz NOT NULL, used_at timestamptz NULL, created_at)
 
+auth.sessions (   -- browser sessions (ADR-028); cookie carries the secret, only its SHA-256 is stored
+  id, token_hash bytea NOT NULL UNIQUE, user_id → users,
+  created_at, last_seen_at,                          -- idle timeout from last_seen_at (touched at most once a minute)
+  authenticated_at, reauthenticated_at NULL,         -- step-up window (SECURITY.md §3.3)
+  absolute_expires_at timestamptz NOT NULL,
+  mfa_verified boolean, mfa_enrollment_required boolean,   -- restricted session until TOTP is enrolled
+  ip inet NULL, user_agent text NULL)
+  -- ix (user_id, created_at) for the concurrent-session cap; ix (absolute_expires_at)
+
+auth.login_challenges (id, token_hash bytea NOT NULL UNIQUE, user_id → users,
+  attempts integer CHECK (BETWEEN 0 AND 5), created_at, expires_at, ip inet NULL)   -- MFA step after the password
+
 auth.mfa_totp (user_id uuid PK → users, secret_encrypted bytea NOT NULL, secret_key_version smallint NOT NULL,
   confirmed_at timestamptz NULL, last_used_step bigint NULL /* replay protection */, created_at)
 
-auth.recovery_codes (id, user_id → users, code_hash text NOT NULL, used_at timestamptz NULL, created_at)
+auth.recovery_codes (id, user_id → users, code_hash bytea NOT NULL /* SHA-256 */, used_at timestamptz NULL, created_at,
+  UNIQUE (user_id, code_hash))
 
-auth.api_tokens (id, user_id → users, name text NOT NULL, token_prefix char(8) NOT NULL,
+auth.api_tokens (id, user_id → users, name text NOT NULL, token_prefix text NOT NULL UNIQUE CHECK (~ '^[A-Za-z0-9]{8}$'),
   token_hash bytea NOT NULL UNIQUE,                    -- SHA-256 of high-entropy token
-  company_id uuid NULL → org.companies,                 -- NULL = all companies of the user (restricted by assignments)
+  company_id uuid NULL → org.companies,                 -- NULL = all companies of the user (restricted by assignments); no RLS (§3)
   allowed_permissions text[] NULL,                      -- optional down-scoping; must be subset of user's permissions
   rate_limit_per_minute integer NULL CHECK (rate_limit_per_minute > 0),   -- NULL = default (SECURITY.md §9)
   expires_at timestamptz NOT NULL CHECK (expires_at <= created_at + interval '366 days'),
@@ -410,20 +424,26 @@ auth.role_permissions (role_id → roles, permission_code → permissions, PRIMA
 
 auth.role_assignments (id, user_id → users, role_id → roles, company_id → org.companies,
   valid_from date NULL, valid_to date NULL, + std (without RLS),
-  UNIQUE (user_id, role_id, company_id))
+  UNIQUE (user_id, role_id, company_id), UNIQUE (id, company_id) /* target of the branch FK */)
   -- ix (user_id, company_id)
 
-auth.role_assignment_branches (role_assignment_id → role_assignments ON DELETE CASCADE,
-  company_id uuid NOT NULL, branch_id uuid NOT NULL, PRIMARY KEY (role_assignment_id, branch_id),
+auth.role_assignment_branches (role_assignment_id, company_id uuid NOT NULL, branch_id uuid NOT NULL,
+  PRIMARY KEY (role_assignment_id, branch_id),
+  FOREIGN KEY (role_assignment_id, company_id) → role_assignments (id, company_id) ON DELETE CASCADE,
   FOREIGN KEY (company_id, branch_id) → org.branches (company_id, id))
   -- no rows = all branches of the company
 
-auth.login_attempts (id, user_id uuid NULL, email_hash bytea NOT NULL, ip inet NOT NULL,
-  succeeded boolean NOT NULL, failure_reason text NULL, attempted_at timestamptz NOT NULL DEFAULT now())
-  -- ix (email_hash, attempted_at DESC), ix (ip, attempted_at DESC); purge > 90 days
+auth.login_attempts (id, user_id uuid NULL, email_hash bytea NOT NULL, ip inet NULL,
+  succeeded boolean NOT NULL, failure_reason text NULL CHECK (IN ('INVALID_CREDENTIALS','UNKNOWN_USER',
+  'ACCOUNT_NOT_ACTIVE','ACCOUNT_LOCKED','LOCKOUT','INVALID_MFA_CODE','RATE_LIMITED')), attempted_at timestamptz NOT NULL DEFAULT now())
+  -- ix (email_hash, attempted_at DESC), ix (ip, attempted_at DESC), ix (user_id, attempted_at DESC)
+  -- append-only for erp_app (no UPDATE/DELETE); purge > 90 days through auth.purge_security_records
 
-auth.spring_session, auth.spring_session_attributes  -- Spring Session JDBC schema, plus columns:
-  -- ix on PRINCIPAL_NAME; idle & absolute expiry handled by app (SECURITY.md §3.3)
+auth.throttle_events (id, action text NOT NULL, subject_hash bytea NOT NULL, occurred_at)
+  -- counters for password-reset requests, token redemptions and failed step-up confirmations (ADR-029)
+
+-- auth.purge_security_records(retention interval): SECURITY DEFINER housekeeping (hourly job) that deletes
+-- expired sessions, challenges, user tokens, throttle events and login attempts past the retention.
 ```
 
 ### 5.4 `partners`
@@ -1141,7 +1161,8 @@ reporting.export_jobs (id, company_id C, user_id, report_code, parameters jsonb,
   status CHECK (IN ('QUEUED','RUNNING','SUCCEEDED','FAILED','EXPIRED')), file_id NULL, row_count bigint NULL,
   error_code NULL, requested_at, started_at, completed_at, expires_at)
 
-admin.audit_log (   -- PARTITION BY RANGE (occurred_at), monthly partitions created ahead by job
+admin.audit_log (   -- PARTITION BY RANGE (occurred_at); monthly UTC partitions, 12 months ahead, created by
+                    -- admin.ensure_audit_partitions(months) (SECURITY DEFINER; migration + 6-hourly job)
   id uuid NOT NULL, occurred_at timestamptz NOT NULL,
   company_id uuid NULL, actor_user_id uuid NULL,
   actor_type text NOT NULL CHECK (IN ('USER','API_TOKEN','SYSTEM')), api_token_id uuid NULL,
@@ -1294,6 +1315,9 @@ System postings (event listeners) use exactly the same sequence inside the publi
 | Edit draft document | Optimistic version check | Concurrent edits get 409. |
 | Fulfil order line (delivery / receipt / invoice) | Order header `FOR UPDATE` (serializes fulfilment per order) → lines | Prevents two deliveries from over-delivering the same line. |
 | Payroll run calculate/approve | Run row `FOR UPDATE`; status `CALCULATING` acts as a mutex | |
+| Disable or demote a system administrator | Target `auth.users` row `FOR UPDATE` → `pg_advisory_xact_lock(UserRepository.SYSTEM_ADMIN_SET_LOCK)` → count active administrators | The advisory lock serializes changes to the administrator set, so two administrators disabling each other cannot leave none (`409 LAST_SYSTEM_ADMIN`). Locking all administrator rows instead would deadlock against the already-locked targets. |
+| Log in, change password | `auth.users` row `FOR UPDATE` | Serializes failure counters and lockout per user. |
+| Complete MFA / redeem invitation or reset token | `auth.login_challenges` or `auth.user_tokens` row `FOR UPDATE` → `auth.users` row `FOR UPDATE` | A challenge or token is used at most once; attempts are counted exactly. |
 
 Deadlock handling: the retry policy in ARCHITECTURE.md §6.2. `lock_timeout = '5s'` is set per transaction.
 
@@ -1303,6 +1327,7 @@ Deadlock handling: the retry policy in ARCHITECTURE.md §6.2. `lock_timeout = '5
 - Parallel postings never duplicate a document number and never leave a gap. Gaps can arise only from rollbacks, which return the number because it is taken inside the same transaction.
 - Parallel payment allocations never over-settle an open item.
 - Posting during a period close either completes before the close or fails with `PERIOD_CLOSED`.
+- Two system administrators disabling each other concurrently leave exactly one (`UserAdministrationIntegrationTest`, Phase 3).
 
 ---
 

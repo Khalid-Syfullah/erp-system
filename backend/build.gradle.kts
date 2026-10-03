@@ -2,6 +2,7 @@ import org.flywaydb.core.Flyway
 import org.jooq.codegen.GenerationTool
 import org.jooq.meta.jaxb.Configuration
 import org.jooq.meta.jaxb.Database
+import org.jooq.meta.jaxb.ForcedType
 import org.jooq.meta.jaxb.Generate
 import org.jooq.meta.jaxb.Generator
 import org.jooq.meta.jaxb.Jdbc
@@ -16,6 +17,7 @@ buildscript {
     dependencies {
         // Build-time classpath for jOOQ code generation (see generateJooq below).
         classpath(libs.codegen.jooq)
+        classpath(libs.codegen.jooq.postgres.extensions)
         classpath(libs.codegen.flyway.core)
         classpath(libs.codegen.flyway.postgresql)
         classpath(libs.codegen.postgresql)
@@ -26,6 +28,7 @@ buildscript {
 
 plugins {
     java
+    jacoco
     alias(libs.plugins.spring.boot)
     alias(libs.plugins.spotless)
 }
@@ -62,6 +65,12 @@ dependencies {
     implementation(libs.spring.boot.starter.jooq)
     implementation(libs.spring.boot.starter.flyway)
     implementation(libs.flyway.database.postgresql)
+    implementation(libs.jooq.postgres.extensions)
+    implementation(libs.spring.boot.starter.mail)
+    // Argon2id for Spring Security's Argon2PasswordEncoder (SECURITY.md §3.2).
+    implementation(libs.bouncycastle.bcprov)
+    // Cluster-safe recurring maintenance jobs (ARCHITECTURE.md §2).
+    implementation(libs.db.scheduler.starter)
     // Only the module annotations at runtime; verification and documentation are test-only.
     implementation(libs.spring.modulith.api)
     // Compile-time access to PSQLException (constraint names in DatabaseErrorTranslator).
@@ -149,9 +158,19 @@ val generateJooq = tasks.register("generateJooq") {
                                 Database()
                                     .withName("org.jooq.meta.postgres.PostgresDatabase")
                                     .withSchemata(schemas.map { SchemaMappingType().withInputSchema(it) })
-                                    .withExcludes("flyway_schema_history")
+                                    // Monthly audit partitions are reached only through admin.audit_log (RLS).
+                                    .withExcludes("flyway_schema_history|audit_log_[0-9]{6}")
                                     .withIncludeRoutines(false)
                                     .withIncludeTriggerRoutines(false)
+                                    .withForcedTypes(
+                                        // citext is bound as text; the application stores and queries
+                                        // lower-cased values (auth.users.email has a CHECK for it).
+                                        ForcedType().withName("VARCHAR").withIncludeTypes("citext"),
+                                        ForcedType()
+                                            .withUserType("org.jooq.postgres.extensions.types.Inet")
+                                            .withBinding("org.jooq.postgres.extensions.bindings.InetBinding")
+                                            .withIncludeTypes("inet"),
+                                    )
                             )
                             .withGenerate(
                                 Generate()
@@ -204,6 +223,39 @@ tasks.test {
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
     }
 }
+
+jacoco { toolVersion = libs.versions.jacoco.get() }
+
+// Coverage floor of the global definition of done (DEVELOPMENT_PLAN.md §3): 80 % of the lines in
+// each module's domain and application packages. Generated jOOQ code is excluded.
+val coverageClasses = sourceSets.main.get().output.classesDirs.asFileTree.matching { exclude("com/erp/db/**") }
+
+tasks.jacocoTestReport {
+    dependsOn(tasks.test)
+    classDirectories.setFrom(coverageClasses)
+    reports {
+        xml.required = true
+        html.required = true
+    }
+}
+
+tasks.jacocoTestCoverageVerification {
+    dependsOn(tasks.test)
+    classDirectories.setFrom(coverageClasses)
+    violationRules {
+        rule {
+            element = "PACKAGE"
+            includes = listOf("com.erp.*.domain", "com.erp.*.application")
+            limit {
+                counter = "LINE"
+                minimum = "0.80".toBigDecimal()
+            }
+        }
+    }
+}
+
+tasks.test { finalizedBy(tasks.jacocoTestReport) }
+tasks.check { dependsOn(tasks.jacocoTestCoverageVerification) }
 
 spotless {
     java {

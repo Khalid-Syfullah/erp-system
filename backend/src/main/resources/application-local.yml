@@ -9,6 +9,12 @@ spring:
     url: ${ERP_DB_URL:jdbc:postgresql://localhost:5432/erp}
   flyway:
     enabled: ${ERP_DB_MIGRATE_ON_STARTUP:true}
+  mail:
+    # Mailpit from infra/compose (web UI on http://localhost:8025).
+    host: ${ERP_MAIL_HOST:localhost}
+    port: ${ERP_MAIL_PORT:1025}
+    properties:
+      mail.smtp.starttls.enable: false
 
 logging:
   # Human-readable console output locally (logback-spring.xml); still redacted.
@@ -17,4 +23,10 @@ logging:
 
 erp:
   security:
-    csrf-cookie-secure: false
+    secure-cookies: false
+    allowed-origins: ${ERP_SECURITY_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:8080}
+  auth:
+    public-base-url: ${ERP_AUTH_PUBLIC_BASE_URL:http://localhost:5173}
+
+db-scheduler:
+  enabled: ${ERP_JOBS_ENABLED:true}

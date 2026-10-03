@@ -28,8 +28,8 @@ flowchart LR
 | Phase | Name | Depends on | Relative size |
 |---|---|---|---|
 | 1 | Architecture and specification | — | M (done) |
-| 2 | Foundation (platform kernel, tooling, org core) | 1 | L |
-| 3 | Authentication and RBAC | 2 | L |
+| 2 | Foundation (platform kernel, tooling, org core) | 1 | L (done) |
+| 3 | Authentication and RBAC | 2 | L (done) |
 | 4 | Organization (complete) and Partners | 3 | M |
 | 5 | Inventory | 4 | XL |
 | 6 | Procurement | 5 | L |
@@ -165,7 +165,7 @@ A phase is done only when **all** of the following hold:
 | Mailpit in compose | Phase 3 | Invitation and password-reset emails |
 | `idempotency`: filter, store and purge | Phase 4 | First business create endpoints |
 | `events`: Event Publication Registry, `processed_events` | Phase 4 | `org.company.created` seeding pipeline |
-| `crypto`: field encryption | Phase 4 | Partner bank accounts |
+| `crypto`: field encryption | Phase 3 (pulled forward, ADR-031) | TOTP secrets |
 | `files`: S3 port, MinIO | Phase 4 | Partner/company attachments |
 | `numbering`: gapless sequences (with the 50-way concurrency test) | Phase 5 | Stock movement numbers |
 | Transaction retry decorator (40001/40P01) | Phase 5 | Stock locking |
@@ -173,36 +173,113 @@ A phase is done only when **all** of the following hold:
 | OpenTelemetry tracing export | Phase 12 | Production observability backend (Q-9) |
 | CodeQL/Semgrep in CI | Phase 12 or when repository hosting is decided | Requires the hosting decision (CodeQL on private repositories needs GitHub Advanced Security) |
 
-### Phase 3 — Authentication and RBAC
+### Phase 3 — Authentication and RBAC ✅
 
 **Prerequisites:** Phase 2.
 
-**Deliverables:**
+**Goal:** every request is authenticated, authorized server-side and confined to the caller's companies and branches, with the security controls of SECURITY.md §3–§5 and §8–§10 proven by tests.
 
-- Carried over from Phase 2 (ADR-025):
-  - company and branch administration endpoints (API.md §17.3) and the `OrgFacade`
-  - `AuditPort` with the partitioned `admin.audit_log`
-  - db-scheduler with worker mode
-  - Mailpit in compose
-  - an opt-out from string trimming for password fields (`SanitizingStringDeserializer`)
-  - the `Origin` check, the CSRF bootstrap endpoint and the bearer-token CSRF exemption
-- Users, invitations, password set and reset (with email through Mailpit in development), Argon2id hashing, breached-password list check.
-- Session login and logout with Spring Session JDBC, cookie settings, CSRF (cookie plus header, Origin check), idle and absolute timeouts, session rotation, concurrent-session cap, session listing and revocation.
-- Login throttling and lockout (`auth.login_attempts`, Bucket4j/PostgreSQL), plus the general API rate limiter.
-- TOTP MFA (setup, confirm, verify, recovery codes, mandatory-by-role enforcement), and step-up re-authentication.
-- Service accounts and API tokens (hash, prefix, expiry, company and permission down-scoping, per-token rate limit).
-- Permission catalogue sync from code, system roles seed (SECURITY.md §4.3), custom roles, role assignments with branch scoping and validity.
-- A `PermissionCheck` implementation with a per-(user, company) cache and invalidation, plus `CompanyContextInterceptor` (404 masking).
-- SoD policy framework: a reusable `SegregationOfDutiesPolicy`.
-- Endpoints: API.md §17.1, and §17.2 (users, roles, service accounts).
-- **Security test suites:** the authz matrix generator and the IDOR suite (SECURITY.md §4.5), active for every later phase.
+**Delivered:**
 
-**Exit criteria:**
+1. **Carried over from Phase 2** (ADR-025):
+   - company and branch administration endpoints (API.md §17.2–§17.3) and the `OrgFacade`
+   - `AuditPort` with the partitioned `admin.audit_log`: append-only trigger, monthly UTC partitions 12 months ahead, RLS with a global-access branch, company and global audit search
+   - db-scheduler (`platform.scheduled_tasks`, enabled with `ERP_JOBS_ENABLED`): audit partition upkeep and hourly purges of expired security records
+   - Mailpit in compose, and an SMTP notifier (only when `ERP_MAIL_HOST` is set)
+   - `@RawText` (no trimming for password fields)
+   - the `Origin`/`Referer` check, `GET /auth/csrf` and the bearer-token CSRF exemption
+   - field encryption, pulled forward from Phase 4 for TOTP secrets (ADR-031)
+2. **Users and credentials:**
+   - users (human and service), invitations and password reset by single-use hashed email tokens (link token in the URL fragment)
+   - Argon2id (OWASP parameters, rehash on login), NIST-style policy with NFKC, a breached-password list, and email/name checks
+   - password change with session rotation
+   - a one-shot `bootstrap-admin` command for the first system administrator (ADR-032)
+3. **Sessions** (ADR-028): `auth.sessions`, with:
+   - a hashed 256-bit cookie secret
+   - idle and absolute timeouts
+   - rotation on password change and step-up
+   - a cap of 5 concurrent sessions
+   - listing and revocation
+   - termination when a user is disabled, when their last assignment is removed, or when they gain an MFA obligation
+4. **Login protection:**
+   - a generic `INVALID_CREDENTIALS` with equal timing (a dummy hash)
+   - per-account and per-IP limits
+   - a 15-minute lock after 5 failures, and an administrator unlock after 3 locks in 24 hours
+   - emails on lock
+   - `auth.login_attempts` (append-only)
+   - throttles for reset requests, token redemption and step-up (ADR-029)
+5. **MFA:**
+   - TOTP (RFC 6238, ±1 step, replay protection) with secrets encrypted by AES-256-GCM
+   - 10 hashed recovery codes
+   - mandatory MFA for system administrators, `requires_mfa` roles and sensitive permissions, with enrollment-restricted sessions
+   - a challenge cookie between the password and TOTP steps
+   - step-up re-authentication (5 minutes)
+6. **API tokens:**
+   - personal and service-account tokens (`erp_pat_…`, SHA-256)
+   - mandatory expiry of at most 365 days
+   - company restriction and permission down-scoping
+   - a per-token rate limit
+   - revocation, including all tokens when the owner is disabled
+7. **Authorization:**
+   - the permission catalogue and 18 system roles seeded from SECURITY.md (ADR-030); custom roles
+   - role assignments with branch scope and validity dates
+   - `PermissionResolver`, a per-(user, company) cache with 60-second TTL that is invalidated on change
+   - `CompanyContextInterceptor` (404 masking)
+   - `EndpointAccessInterceptor` (403, denials audited)
+   - `@GlobalAccess` for cross-company administration
+   - privilege-escalation and self-assignment guards for company administrators
+   - the last-administrator guard, serialized with an advisory lock
+8. **Rate limiting:** IETF `RateLimit-*` headers and `Retry-After`; per-instance budgets for sessions, tokens and anonymous callers (ADR-029).
+9. **Coverage tooling:** JaCoCo with the 80% line floor on `domain` and `application` packages, enforced by `check` and CI.
+10. **Tests:** 249 in 41 classes at the end of Phase 3. New in this phase:
+    - authentication, sessions, password reset and invitations, MFA, API tokens
+    - authorization: 401/403/404, IDOR, branch scope, privilege escalation, sensitive-permission MFA obligations
+    - user, role and org administration
+    - the endpoint security matrix (every handler: anonymous 401, foreign company 404, missing permission 403)
+    - permission catalogue consistency, rate limits, bootstrap admin
+    - unit tests for TOTP, Base32, password policy, token format, Argon2 parameters, field encryption, the SMTP notifier and security primitives
 
-- Every test in SECURITY.md §13 tagged "Phase 3" passes.
-- A user without an assignment cannot see any company resources (404).
-- Permission removal takes effect within 60 s.
-- Disabling a user kills their sessions immediately.
+    Coverage: org.application 98%, auth.application 93%, admin.application 92%, auth.domain 96%.
+
+**Exit criteria (met):**
+
+- Every SECURITY.md §13 test tagged "Phase 3" passes:
+  - hashing, lockout, reset tokens, session rotation and timeouts, concurrent session cap
+  - CSRF for cookies but not for bearer tokens
+  - TOTP enrollment, replay and recovery codes
+  - the authorization matrix, the IDOR suite and rate limits
+- A user without an assignment cannot see any company resources (404), and that includes system administrators.
+- Permission removal takes effect immediately on the instance that made the change, and within the 60-second cache TTL elsewhere.
+- Disabling a user kills their sessions and API tokens immediately.
+
+**Deviations from the plan** (all with ADRs):
+
+| Plan | Delivered | ADR |
+|---|---|---|
+| Spring Session JDBC | Application-owned `auth.sessions` | ADR-028 |
+| Bucket4j/PostgreSQL rate limits | PostgreSQL counters for authentication; per-instance windows for API budgets | ADR-029 |
+| "Permission catalogue sync from code" | Repeatable seed migration from SECURITY.md, plus a consistency test | ADR-030 |
+| Field encryption in Phase 4, KMS envelope keys | Phase 3, keys from the secret manager; KMS unwrap deferred | ADR-031 |
+| Worker mode `ERP_ROLE=worker` | `ERP_JOBS_ENABLED=true` turns on the scheduler | ARCHITECTURE.md §8 |
+| `SegregationOfDutiesPolicy` framework | `SegregationOfDuties` helper (self-assignment rule); business SoD rules arrive with their modules | — |
+| IDOR suite via OpenAPI introspection | Handler-method introspection (`EndpointSecurityMatrixTest`) plus fixture-based IDOR cases | SECURITY.md §4.5 |
+
+**Known gaps (carried forward):**
+
+- **OpenAPI** with `x-permission` (definition of done §3) is not generated yet. It is planned with Phase 4, the first phase with business endpoints, and the IDOR suite will then switch to OpenAPI introspection for body references.
+- **HIBP k-anonymity check** (`erp.security.password.hibp-check`, off by default) is not implemented → Phase 12.
+- **KMS envelope encryption and the re-encryption job** → Q-9, Phase 12.
+- **Admin settings, retention policies, system health endpoints** (API.md §17.2) → with their first consumers (Phases 4 and 12).
+- **Future-dated assignments of MFA-requiring roles:** login enforces MFA enrollment from the day the assignment becomes valid. A session that is already open when it becomes valid keeps running until it expires (at most 12 hours) before the obligation applies.
+- **API rate budgets are per instance** (ADR-029).
+- **Email address changes** (self-service with step-up, or by an administrator, both with verification of the new address) are not implemented; a wrong address is fixed by creating a new invitation.
+- **`@ApplicationModuleTest` per module:** module wiring is verified by `ModularityTests` and full-context integration tests instead.
+
+**Next phase prerequisites:**
+
+- Phase 4 relies on `OrgFacade`, `AuditPort`, `FieldEncryptor`, the permission catalogue and `EndpointSecurityMatrixTest`.
+- New Phase 4 endpoints must declare permissions from SECURITY.md §4.2 (already seeded).
+- Phase 4 adds the idempotency store, the event publication registry and OpenAPI generation.
 
 ### Phase 4 — Organization (complete) and Partners
 
@@ -210,7 +287,8 @@ A phase is done only when **all** of the following hold:
 
 **Deliverables:**
 
-- Carried over from Phase 2 (ADR-025): idempotency (filter, store, purge), the Event Publication Registry and the `processed_events` dedup helper, field encryption (`platform.crypto`), the S3 file port with MinIO in compose, and `platform.money`.
+- Carried over from Phase 2 (ADR-025): idempotency (filter, store, purge), the Event Publication Registry and the `processed_events` dedup helper, the S3 file port with MinIO in compose, and `platform.money`. (Field encryption was delivered in Phase 3, ADR-031.)
+- Carried over from Phase 3: OpenAPI generation with `x-permission`, and switching the IDOR suite to OpenAPI introspection for body references.
 - **Org:**
   - departments (tree, cycle guard)
   - exchange rates (with the lookup service: latest on or before a date)

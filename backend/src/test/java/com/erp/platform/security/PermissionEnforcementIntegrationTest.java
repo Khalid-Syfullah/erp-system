@@ -24,6 +24,7 @@ class PermissionEnforcementIntegrationTest extends IntegrationTest {
     @TestConfiguration
     static class GrantReadOnly {
         @Bean
+        @org.springframework.context.annotation.Primary
         PermissionCheck permissionCheck() {
             Set<String> granted = Set.of("test.resource.read");
             return (context, permission) -> context.requestId() != null && granted.contains(permission);

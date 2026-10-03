@@ -7,6 +7,25 @@ spring:
       maximum-pool-size: 5
       minimum-idle: 1
 
+erp:
+  security:
+    allowed-origins: http://localhost
+    # Integration tests run many requests from one address and user; RateLimitIntegrationTest
+    # re-enables tight limits explicitly.
+    rate-limits:
+      enabled: false
+  auth:
+    public-base-url: http://localhost:5173
+    login:
+      per-account-per-minute: 1000
+      per-ip-per-minute: 10000
+    tokens:
+      reset-requests-per-ip-per-hour: 10000
+      redemptions-per-ip-per-hour: 10000
+
+db-scheduler:
+  enabled: false
+
 logging:
   pattern:
     level: "%5p [%X{request_id:-}]"

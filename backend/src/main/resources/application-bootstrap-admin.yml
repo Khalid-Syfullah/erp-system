@@ -1,0 +1,11 @@
+# One-shot creation of the first system administrator:
+#   SPRING_PROFILES_ACTIVE=prod,bootstrap-admin ERP_BOOTSTRAP_ADMIN_EMAIL=... ERP_BOOTSTRAP_ADMIN_PASSWORD=...
+# No HTTP server; the process exits when done. Idempotent: skipped if a system administrator exists.
+spring:
+  main:
+    web-application-type: none
+  flyway:
+    enabled: false
+
+db-scheduler:
+  enabled: false

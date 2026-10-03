@@ -71,9 +71,9 @@ The repository was empty at Phase 1, so this stack was chosen from scratch. The 
 | Migrations | **Flyway** | Plain SQL migrations. One global ordered sequence, with file names namespaced by module. |
 | Database | **PostgreSQL 18** | Native `uuidv7()`, RLS, exclusion constraints (`btree_gist`), partitioning. |
 | Money/decimals | `java.math.BigDecimal` in a `Money` value object; `NUMERIC` in the database | Floating point is banned. ArchUnit rejects `double`/`float` in domain packages. |
-| Security | **Spring Security 7** | Server-side sessions (Spring Session JDBC), CSRF and security headers. |
+| Security | **Spring Security 7** | Server-side sessions (`auth.sessions`, ADR-028), CSRF and security headers. |
 | Password hashing | Argon2id (Spring Security `Argon2PasswordEncoder`, BouncyCastle) | See SECURITY.md. |
-| Rate limiting | Bucket4j with a PostgreSQL backend | Works across instances. |
+| Rate limiting | PostgreSQL counters for authentication; in-memory per-instance windows for API budgets (ADR-029) | Authentication limits work across instances; API budgets are per instance behind the load balancer limits. |
 | Background jobs | **db-scheduler** (PostgreSQL-backed, cluster-safe) | Recurring and one-off jobs. |
 | Async events | Spring Modulith Event Publication Registry (JDBC) | Reliable at-least-once delivery. |
 | Validation | Jakarta Bean Validation for request shape; domain validation in domain code | |
@@ -171,7 +171,7 @@ Rules:
 |---|---|---|---|
 | **Platform kernel** | `platform` / `platform` | document sequences, idempotency keys, event publication registry, scheduler tables, file metadata | Shared technical capabilities: transactions, request context, money, IDs, errors, numbering, idempotency, audit **port**, files, events infrastructure. **It contains no business logic.** |
 | **Organization** | `org` / `org` | companies, branches, departments, currencies, exchange rates, countries, tax codes, payment terms, company settings | Legal-entity structure and shared reference data. |
-| **Auth** | `auth` / `auth` | users, credentials, MFA factors, sessions (Spring Session tables), API tokens, roles, role permissions, role assignments, login attempts, password reset tokens | Identity, authentication, RBAC and the authorization decision point. |
+| **Auth** | `auth` / `auth` | users, credentials, MFA factors, sessions and MFA challenges, API tokens, roles, role permissions, role assignments, login attempts, password reset tokens | Identity, authentication, RBAC and the authorization decision point. |
 | **Partners** | `partners` / `partners` | partners, partner addresses, partner contacts, customer profiles, supplier profiles, partner groups | Master data for customers and suppliers. This is a supporting module that the scope list did not name; see ADR-007. |
 | **Inventory** | `inventory` / `inventory` | UoM categories, units, UoM conversions, product categories, products, attributes, variants (SKUs), warehouses, locations, stock movements, stock movement lines, the inventory ledger, stock balances, warehouse stock, reservations, valuation (average cost), stock counts | Catalog and all physical stock. It is the **only** writer of stock quantities and stock value. |
 | **Procurement** | `procurement` / `procurement` | purchase requisitions, purchase orders, goods receipts, purchase returns, supplier bills, supplier debit notes, supplier price lists | Procure-to-pay operational documents up to the posted supplier bill. |
@@ -527,7 +527,7 @@ Event classes live in `<module>.events` as Java records. The JSON shape of each 
 | Component | Replicas | Notes |
 |---|---|---|
 | `erp-backend` (API mode) | 2+ (horizontal) | Stateless. Sessions live in PostgreSQL. Runs behind the load balancer. |
-| `erp-backend` (worker mode, `ERP_ROLE=worker`) | 1–2 | The same image. Runs db-scheduler jobs and resubmits event publications. HTTP is disabled except the management port. |
+| `erp-backend` (worker mode, `ERP_JOBS_ENABLED=true`) | 1–2 | The same image. Runs db-scheduler jobs and resubmits event publications. It is kept out of the load balancer's API target group (the flag only enables the scheduler; the HTTP port still listens). db-scheduler's row locking makes concurrent workers safe. |
 | `erp-frontend` | Static assets on a CDN or nginx | Same origin as the API (`/` → frontend, `/api` → backend) so that cookies can be `SameSite=Strict`/`Lax` and CORS is not needed. |
 | PostgreSQL 18 | Managed (e.g. AWS RDS/Aurora, GCP Cloud SQL) with Multi-AZ | Point-in-time recovery: 35-day retention, daily snapshots, monthly restore drill. A read replica is optional for reporting (Phase 10+). |
 | Object storage | S3 (versioning enabled, SSE-KMS) | |

@@ -27,6 +27,8 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
 
     public static final String REQUEST_ID_HEADER = "X-Request-Id";
     public static final String MDC_REQUEST_ID = "request_id";
+    public static final String MDC_USER_ID = "user_id";
+    public static final String MDC_COMPANY_ID = "company_id";
     static final String REQUEST_ID_ATTRIBUTE = RequestLoggingFilter.class.getName() + ".requestId";
 
     private static final Pattern ACCEPTED_REQUEST_ID = Pattern.compile("^[A-Za-z0-9._:-]{8,128}$");
@@ -39,7 +41,7 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
         request.setAttribute(REQUEST_ID_ATTRIBUTE, requestId);
         response.setHeader(REQUEST_ID_HEADER, requestId);
         MDC.put(MDC_REQUEST_ID, requestId);
-        CurrentContext.set(RequestContext.forRequest(requestId));
+        CurrentContext.set(RequestContext.forRequest(requestId, request.getRemoteAddr(), userAgent(request)));
         long start = System.nanoTime();
         try {
             chain.doFilter(request, response);
@@ -62,7 +64,18 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
             }
             CurrentContext.clear();
             MDC.remove(MDC_REQUEST_ID);
+            MDC.remove(MDC_USER_ID);
+            MDC.remove(MDC_COMPANY_ID);
         }
+    }
+
+    private static String userAgent(HttpServletRequest request) {
+        String agent = request.getHeader("User-Agent");
+        if (agent == null) {
+            return null;
+        }
+        String printable = agent.replaceAll("\\p{Cntrl}", "");
+        return printable.length() > 512 ? printable.substring(0, 512) : printable;
     }
 
     static String requestId(String supplied) {

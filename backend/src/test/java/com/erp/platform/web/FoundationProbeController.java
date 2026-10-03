@@ -121,8 +121,9 @@ class FoundationProbeController {
 
     /** Inserts a branch inside the given company context, to provoke real database errors. */
     @AuthenticatedEndpoint
-    @PostMapping("/companies/{companyId}/branches")
-    Map<String, UUID> createBranch(@PathVariable UUID companyId, @RequestBody BranchRequest request) {
+    @PostMapping("/companies/{targetCompanyId}/branches")
+    Map<String, UUID> createBranch(
+            @PathVariable("targetCompanyId") UUID companyId, @RequestBody BranchRequest request) {
         RequestContext context = CurrentContext.get().orElseThrow().withCompany(companyId);
         UUID id = CurrentContext.callWith(
                 context,

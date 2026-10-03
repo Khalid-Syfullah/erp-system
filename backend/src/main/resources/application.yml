@@ -44,6 +44,15 @@ spring:
     connect-retries: 10
   jooq:
     sql-dialect: postgres
+  mail:
+    host: ${ERP_MAIL_HOST:}
+    port: ${ERP_MAIL_PORT:587}
+    username: ${ERP_MAIL_USERNAME:}
+    password: ${ERP_MAIL_PASSWORD:}
+    properties:
+      mail.smtp.starttls.enable: ${ERP_MAIL_STARTTLS:true}
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 10000
   mvc:
     problemdetails:
       enabled: false
@@ -86,6 +95,10 @@ management:
   info:
     env:
       enabled: false
+  health:
+    # Mail delivery is asynchronous and retried by users; an SMTP outage must not mark the service down.
+    mail:
+      enabled: false
 
 logging:
   structured:
@@ -106,4 +119,53 @@ erp:
     cursor-signing-key: ${ERP_API_CURSOR_SIGNING_KEY:}
     max-request-body-size: 1MB
   security:
-    csrf-cookie-secure: true
+    secure-cookies: true
+    # Exact origins of the web application, comma-separated (required in production).
+    allowed-origins: ${ERP_SECURITY_ALLOWED_ORIGINS:}
+    rate-limits:
+      enabled: true
+      session-per-minute: 600
+      token-per-minute: 1200
+      anonymous-per-minute: 300
+  crypto:
+    # <version>:<base64 32-byte key>[,...]; highest version encrypts (required in production).
+    field-encryption-keys: ${ERP_FIELD_ENCRYPTION_KEYS:}
+  auth:
+    # Base URL of the web application for invitation and reset links (required in production).
+    public-base-url: ${ERP_AUTH_PUBLIC_BASE_URL:}
+    mail-from: ${ERP_MAIL_FROM:no-reply@erp.invalid}
+    permission-cache-ttl: 60s
+    session:
+      idle-timeout: 30m
+      absolute-timeout: 12h
+      max-concurrent: 5
+    login:
+      max-consecutive-failures: 5
+      lockout-duration: 15m
+      lockouts-before-admin-unlock: 3
+      per-account-per-minute: 5
+      per-ip-per-minute: 20
+      attempt-retention: 90d
+    tokens:
+      invitation-ttl: 72h
+      password-reset-ttl: 30m
+      reset-requests-per-email-per-hour: 3
+      reset-requests-per-ip-per-hour: 10
+      redemptions-per-ip-per-hour: 10
+      api-token-default-days: 90
+      api-token-max-days: 365
+    mfa:
+      issuer: ${ERP_MFA_ISSUER:ERP}
+      challenge-ttl: 5m
+    bootstrap:
+      admin-email: ${ERP_BOOTSTRAP_ADMIN_EMAIL:}
+      admin-password: ${ERP_BOOTSTRAP_ADMIN_PASSWORD:}
+      admin-display-name: ${ERP_BOOTSTRAP_ADMIN_DISPLAY_NAME:}
+
+# Recurring maintenance jobs (purges, audit partitions). Enabled on the worker only
+# (ERP_JOBS_ENABLED=true); API instances leave it off.
+db-scheduler:
+  enabled: ${ERP_JOBS_ENABLED:false}
+  table-name: platform.scheduled_tasks
+  threads: 2
+  polling-interval: 30s

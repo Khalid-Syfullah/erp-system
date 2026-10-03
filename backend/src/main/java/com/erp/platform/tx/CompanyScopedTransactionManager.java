@@ -15,8 +15,9 @@ import org.springframework.transaction.TransactionDefinition;
  * Transaction manager that binds the {@link RequestContext} to every database transaction
  * (ARCHITECTURE.md §6.3, DATABASE.md §3).
  *
- * <p>At transaction start it executes {@code set_config('app.company_id', …, true)} and
- * {@code set_config('app.user_id', …, true)}. The settings are transaction-local, so they can never
+ * <p>At transaction start it executes {@code set_config('app.company_id', …, true)},
+ * {@code set_config('app.user_id', …, true)} and {@code set_config('app.global_access', …, true)}
+ * (the latter only for {@code @GlobalAccess} system-administration requests). The settings are transaction-local, so they can never
  * leak to the next user of a pooled connection. Row-level-security policies compare
  * {@code company_id} with {@code app.company_id}; without an active company no company-scoped row is
  * visible (fail closed). Read-only transactions are enforced with {@code SET TRANSACTION READ ONLY}.
@@ -26,7 +27,8 @@ import org.springframework.transaction.TransactionDefinition;
 public class CompanyScopedTransactionManager extends JdbcTransactionManager {
 
     static final String SET_CONTEXT_SQL =
-            "SELECT set_config('app.company_id', ?, true), set_config('app.user_id', ?, true)";
+            "SELECT set_config('app.company_id', ?, true), set_config('app.user_id', ?, true),"
+                    + " set_config('app.global_access', ?, true)";
 
     public CompanyScopedTransactionManager(DataSource dataSource) {
         super(dataSource);
@@ -41,6 +43,7 @@ public class CompanyScopedTransactionManager extends JdbcTransactionManager {
         try (PreparedStatement statement = connection.prepareStatement(SET_CONTEXT_SQL)) {
             statement.setString(1, text(context == null ? null : context.companyId()));
             statement.setString(2, text(context == null ? null : context.userId()));
+            statement.setString(3, context != null && context.globalAccess() ? "on" : "");
             statement.execute();
         }
     }

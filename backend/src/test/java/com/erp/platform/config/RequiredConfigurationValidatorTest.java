@@ -13,7 +13,11 @@ class RequiredConfigurationValidatorTest {
                 .withProperty("spring.datasource.url", "jdbc:postgresql://db/erp")
                 .withProperty("spring.datasource.username", "erp_app")
                 .withProperty("spring.datasource.password", "app-secret-value")
-                .withProperty("erp.api.cursor-signing-key", "configured");
+                .withProperty("erp.api.cursor-signing-key", "configured")
+                .withProperty("erp.security.allowed-origins", "https://erp.example.test")
+                .withProperty("erp.crypto.field-encryption-keys", "configured")
+                .withProperty("erp.auth.public-base-url", "https://erp.example.test")
+                .withProperty("spring.mail.host", "smtp.example.test");
     }
 
     @Test
