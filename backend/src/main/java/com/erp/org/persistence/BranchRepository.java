@@ -123,6 +123,16 @@ public class BranchRepository {
                 == 1;
     }
 
+    public List<BranchView> findAll(UUID companyId, java.util.Collection<UUID> ids) {
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        return dsl.selectFrom(BRANCHES)
+                .where(BRANCHES.COMPANY_ID.eq(companyId))
+                .and(BRANCHES.ID.in(ids))
+                .fetch(BranchRepository::toView);
+    }
+
     public boolean countryExists(String code) {
         return dsl.fetchExists(COUNTRIES, COUNTRIES.CODE.eq(code));
     }

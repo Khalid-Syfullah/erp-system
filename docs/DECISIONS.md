@@ -599,6 +599,76 @@ PRODUCT_SPEC.md §4.2 forbids deactivating a branch or department that is still 
 - Deactivation errors list every use (`409 RESOURCE_IN_USE`).
 - Two mutually crossing moves can deadlock. PostgreSQL then aborts one, which is answered with `409 RESOURCE_BUSY` (retryable). Neither order can produce an inconsistent state, and tests cover both outcomes.
 
+### ADR-035 — Phase 5 inventory: scope, platform services and deviations (Accepted, Phase 5)
+
+**Context**
+
+The Phase 5 brief asked for product master data, warehouses and the stock engine:
+
+- opening stock, receipts, issues, transfers, adjustments, reservations and returns
+- transaction history and current balances
+- auditability, race safety and organization isolation
+
+It excluded Procurement, Sales, Accounting, HR, Payroll and Reporting. DEVELOPMENT_PLAN.md's Phase 5 also carried platform items over from Phases 2 and 4 (ADR-025, ADR-033). Several details were not fixed by the specification.
+
+**Decision**
+
+- **Scope.** Phase 5 delivers:
+  - the catalog, warehouses and locations
+  - the stock engine (all twelve movement types, ledger, balances, moving-average valuation, reservations, two-step transfers, reversals, adjustment approval)
+  - physical counts
+  - `InventoryFacade` and the `inventory.stock_movement.posted` event
+  - the nightly invariant job
+  - gapless numbering, numbering prefixes, idempotency with purge, transaction retry, `platform.money`, OpenAPI
+- **Receipts, issues and returns are facade-only.** `PURCHASE_RECEIPT`, `PURCHASE_RETURN`, `SALES_ISSUE` and `SALES_RETURN` are created only by Procurement and Sales through `InventoryFacade` (API.md §17.5). The facade runs in the caller's transaction and refuses a second movement for the same source document (`409 DUPLICATE_SOURCE_DOCUMENT`; the partial unique index decides races). Until those modules exist, integration tests call the facade directly.
+- **Reservations are consumed by issue lines.** A `SALES_ISSUE` line names its reservation (`stock_movement_lines.reservation_id`, INV-2), and posting consumes it under the lock order. This replaces a separate `consumeReservation` facade method. An issue that only reserved stock blocks fails with `INSUFFICIENT_STOCK`; `RESERVED_STOCK_CONFLICT` is kept for adjustments (API.md §6.1).
+- **No prices on products.** "Pricing fields where appropriate" maps to:
+  - costs: line unit costs and the moving average
+  - sales prices: price lists in Phase 7 (PRODUCT_SPEC.md §7)
+  - purchase prices: purchase-order lines in Phase 6
+
+  Products carry tax codes, units and weight only.
+- **Adjustments.**
+  - `inventory.settings.adjustment_approval_threshold` (base currency, NULL = none): posting an adjustment whose absolute value exceeds it needs `inventory.adjustment.approve` (`403 ADJUSTMENT_APPROVAL_REQUIRED`, INV-7).
+  - Creating, editing, posting, cancelling and deleting ADJUSTMENT and SCRAP movements needs `inventory.adjustment.manage`, so a clerk cannot post someone else's adjustment draft.
+  - Count adjustments are posted through the count (`inventory.count.post`).
+- **Counts.**
+  - No location freeze (the optional part of INV-8).
+  - Posting books *counted − current* per line, with the current quantities read from rows locked in the §6.2 order.
+  - A COUNT reason code is required at posting.
+  - The count date is editable until the count starts; the snapshot is taken at start.
+- **Units.**
+  - An entered quantity may not have more decimals than its unit's `rounding_scale` (`TOO_PRECISE`).
+  - The base quantity is rounded HALF_UP to the base unit's scale (1 LB = 0.454 KG). A quantity that rounds to zero is rejected.
+  - Across categories, only a product conversion converts (`422 UOM_NOT_CONVERTIBLE`).
+- **Numbering.**
+  - Sequences are scoped by the fiscal-year label: the calendar year in which the fiscal year starts (`FiscalYears.label`; Accounting's fiscal years in Phase 8 follow the same rule).
+  - Formats are stored per company in `platform.numbering_settings` (a JSON object by document type). Document types are beans (`DocumentType`) with default prefix and padding; inventory defines `STOCK_MOVEMENT` (`SM-{FY}-`, 6) and `STOCK_COUNT` (`SC-{FY}-`, 6).
+  - A prefix renders to at most 20 characters, and the padding is 1–12.
+- **Idempotency** (API.md §10).
+  - The executor claims the key, runs the command and stores the response in one transaction. Concurrent duplicates wait on the uncommitted key row and replay.
+  - Client errors are stored after the rollback, except `RESOURCE_BUSY` and `IDEMPOTENCY_*`, which stay retryable.
+  - The body is stored as `json` (not `jsonb`), so replays are byte-identical.
+  - Keys are honored only on business-document commands that use the executor. Master-data POSTs ignore them, which narrows "optional on all other POSTs".
+- **Transaction retry** is the programmatic `TransactionRetry.run`, which wraps a whole transaction and refuses to run inside one. It is applied by the idempotency executor, not by a `@RetryableTransaction` annotation.
+- **Events.** `StockMovementPosted` is published synchronously through Spring's event publisher inside the posting transaction. That is what Accounting's synchronous listener (Phase 8) needs. There is no asynchronous consumer yet, so these are deferred to the first asynchronous consumer:
+  - the Event Publication Registry
+  - `platform.processed_events`
+  - the `org.company.created` seeding pipeline
+
+  Inventory needs no seeding: settings fall back to defaults in code, and warehouses seed their locations when created.
+- **`stock_movements.partner_id` has no foreign key** until the Partners module exists (Phase 6, which adds it). The calling module validates the partner.
+- **OpenAPI** is generated by springdoc (API only). Each operation carries `x-permission` and its problem responses, and decimals are documented as strings. The document is not served at runtime: springdoc's endpoint has no access annotation, so the endpoint interceptor would deny it. `OpenApiContractTest` writes `build/openapi/openapi.json` and checks it against the handler annotations. Per-endpoint business error codes are summarized by status, not listed exhaustively. The IDOR suite stays on handler introspection (Phase 2 decision).
+- **Deferred:**
+  - opening-stock CSV import → Phase 6, with the CSV framework (opening stock is entered through `OPENING` movements meanwhile)
+  - `v_rpt_*` inventory views → Phase 10, with Reporting, their consumer
+
+**Consequences**
+
+- Procurement and Sales (Phases 6 and 7) build on `InventoryFacade` without schema changes. Phase 6 adds the partner foreign key.
+- Every stock change has a posted movement, ledger rows, an audit record and an event, in one transaction. The database rejects ledger updates and deletes, changes to posted movements, negative stock and residual value. The nightly check detects drift.
+- Hot SKUs serialize on their `warehouse_stock` rows, and gapless numbering serializes postings per company and document type (ADR-012). Phase 12 measures both.
+
 ---
 
 ## 2. Requirement conflicts identified and how they were resolved
@@ -618,6 +688,7 @@ PRODUCT_SPEC.md §4.2 forbids deactivating a branch or department that is still 
 | C-11 | HR depends on Auth (user link), and terminating an employee must disable the user, but Auth cannot listen to HR because that would create a cycle. | HR calls `AuthFacade.deactivateUser` synchronously (ARCHITECTURE.md §7). |
 | C-12 | A credit check in Sales needs AR data, which Accounting owns. Accounting depends on Sales events, so a direct call would create a cycle. | Port inversion: Sales defines `CustomerCreditExposurePort`, and Accounting implements it (ARCHITECTURE.md §5.2). |
 | C-13 | The Phase 4 brief asks for organization management including designations and employee relationships (HR tables, Phase 9), while the plan's Phase 4 holds Partners and platform pieces. | ADR-033: Org complete plus an HR organizational slice in Phase 4; Partners, CSV import, files, events, idempotency, money and OpenAPI rescheduled to their first consumers. |
+| C-14 | The Phase 5 brief asks for receipts, issues, returns and pricing fields in Inventory, while the specification creates receipts and issues only from Procurement and Sales documents and keeps prices in price lists. | ADR-035: the stock operations exist in Inventory and are exposed to those modules through `InventoryFacade`; product master data carries no prices. |
 
 ---
 

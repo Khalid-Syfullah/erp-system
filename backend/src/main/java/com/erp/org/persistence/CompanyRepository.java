@@ -5,6 +5,7 @@ import static com.erp.db.org.Tables.COUNTRIES;
 import static com.erp.db.org.Tables.CURRENCIES;
 
 import com.erp.db.org.tables.records.CompaniesRecord;
+import com.erp.org.api.CompanyProfile;
 import com.erp.org.api.CompanySummary;
 import com.erp.org.application.CompanyCommands;
 import com.erp.org.application.CompanyView;
@@ -116,6 +117,33 @@ public class CompanyRepository {
                         r.getBaseCurrency(),
                         r.getTimezone(),
                         "ACTIVE".equals(r.getStatus())));
+    }
+
+    public Optional<CompanyProfile> profile(UUID id) {
+        return dsl.select(
+                        COMPANIES.ID,
+                        COMPANIES.BASE_CURRENCY,
+                        CURRENCIES.MINOR_UNITS,
+                        COMPANIES.ROUNDING_MODE,
+                        COMPANIES.FISCAL_YEAR_START_MONTH,
+                        COMPANIES.TIMEZONE,
+                        COMPANIES.STATUS)
+                .from(COMPANIES)
+                .join(CURRENCIES)
+                .on(CURRENCIES.CODE.eq(COMPANIES.BASE_CURRENCY))
+                .where(COMPANIES.ID.eq(id))
+                .fetchOptional(r -> new CompanyProfile(
+                        r.value1(),
+                        r.value2(),
+                        r.value3(),
+                        r.value4(),
+                        r.value5(),
+                        r.value6(),
+                        "ACTIVE".equals(r.value7())));
+    }
+
+    public List<UUID> allIds() {
+        return dsl.select(COMPANIES.ID).from(COMPANIES).orderBy(COMPANIES.CODE).fetch(COMPANIES.ID);
     }
 
     public boolean countryExists(String code) {

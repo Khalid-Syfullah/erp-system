@@ -20,6 +20,8 @@ public enum PlatformErrorCode implements ErrorCode {
     RESOURCE_BUSY(HttpStatus.CONFLICT, "Resource busy"),
     VERSION_CONFLICT(HttpStatus.CONFLICT, "Version conflict"),
     INVALID_STATE(HttpStatus.CONFLICT, "Invalid state"),
+    IDEMPOTENCY_KEY_REUSED(HttpStatus.CONFLICT, "Idempotency key reused"),
+    IDEMPOTENCY_IN_PROGRESS(HttpStatus.CONFLICT, "Idempotent request in progress"),
     PRECONDITION_FAILED(HttpStatus.PRECONDITION_FAILED, "Precondition failed"),
     PAYLOAD_TOO_LARGE(HttpStatus.CONTENT_TOO_LARGE, "Payload too large"),
     UNSUPPORTED_MEDIA_TYPE(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "Unsupported media type"),

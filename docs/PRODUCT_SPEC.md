@@ -266,7 +266,7 @@ Every quantity change is a **stock movement** (document) with lines. When a move
 - **INV-2.** Reserved stock is not available to other documents. An issue that consumes its own reservation may use the reserved quantity.
 - **INV-3.** Posted movements are immutable. Corrections create a `REVERSAL` movement, which may itself fail if the stock has since been consumed.
 - **INV-4.** **Moving-average cost** is kept per (company, variant):
-  - Receipt: `new_value = old_value + qty_in × unit_cost`, and `qty += qty_in`.
+  - Receipt: `new_value = old_value + round(qty_in × unit_cost)`, and `qty += qty_in` (every value is rounded to base-currency minor units, INV-5).
   - Issue: `value_out = round(qty_out × old_value / old_qty)`, except that when `qty_out = old_qty`, `value_out = old_value`. This prevents residual value from being left behind.
   - Transfers do not change the valuation.
 - **INV-5.** Inventory value posted to the GL is always the `value_base` of the inventory transactions, rounded to base-currency minor units. The sum of inventory transaction values therefore equals the item valuation total, which equals the GL inventory accounts exactly, provided only inventory postings touch those control accounts.
@@ -278,7 +278,7 @@ Every quantity change is a **stock movement** (document) with lines. When a move
   3. Complete.
   4. Post: a `COUNT_ADJUSTMENT` posts the difference between counted and **current** quantity.
 
-  Locations under count MAY be frozen. That is a setting, off by default.
+  Locations under count MAY be frozen. That is a setting, off by default. The freeze is not implemented in v1 (ADR-035): the difference is computed against the current quantity, read under lock at posting, so movements during a count are still accounted for.
 
 ### 6.5 Stock movement state machine
 

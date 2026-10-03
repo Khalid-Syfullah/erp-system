@@ -22,4 +22,14 @@ public interface OrgFacade {
 
     /** Like {@link #branchForUse} for a department. */
     Optional<DepartmentSummary> departmentForUse(UUID companyId, UUID departmentId);
+
+    /** IDs of all companies (for per-company maintenance jobs). */
+    List<UUID> allCompanyIds();
+
+    Optional<CompanyProfile> companyProfile(UUID companyId);
+
+    Optional<TaxCodeSummary> taxCode(UUID companyId, UUID taxCodeId);
+
+    /** Branches of the company by ID (unknown IDs are skipped). */
+    java.util.Map<UUID, BranchSummary> branches(UUID companyId, Collection<UUID> branchIds);
 }

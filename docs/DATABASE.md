@@ -249,25 +249,31 @@ Only important indexes are listed. Every FK column also gets an index unless it 
 platform.document_sequences (
   company_id     uuid   NOT NULL → org.companies,
   document_type  text   NOT NULL,         -- e.g. 'SALES_INVOICE','PURCHASE_ORDER','JOURNAL:<journal_code>'
-  scope_key      text   NOT NULL,         -- usually fiscal year code 'FY2026' or calendar year '2026'
-  prefix         text   NOT NULL,         -- rendered prefix, e.g. 'INV-2026-'
+  scope_key      text   NOT NULL,         -- fiscal-year label, the calendar year the fiscal year starts in: '2026' (ADR-035)
+  prefix         text   NOT NULL,         -- rendered prefix of the first number in the scope, e.g. 'INV-2026-'
   next_value     bigint NOT NULL DEFAULT 1 CHECK (next_value >= 1),
   padding        smallint NOT NULL DEFAULT 6 CHECK (padding BETWEEN 1 AND 12),
   PRIMARY KEY (company_id, document_type, scope_key)
 )
 -- Gapless: number taken with SELECT … FOR UPDATE inside the posting transaction; rollback returns it.
+-- Company-scoped (RLS). Missing rows are inserted ON CONFLICT DO NOTHING, then locked.
 
-platform.idempotency_keys (
+platform.numbering_settings (            -- per-company number formats (API.md §17.3, ADR-035)
+  company_id uuid PK → org.companies,
+  formats    jsonb NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(formats) = 'object'),
+                                         -- {"STOCK_MOVEMENT": {"prefix": "SM-{FY}-", "padding": 6}}; absent types use defaults
+  + std (version for If-Match))          -- RLS
+
+platform.idempotency_keys (             -- not company-scoped: keyed by the principal (API.md §10)
   user_id        uuid NOT NULL,           -- or api token's service user
-  idem_key       text NOT NULL CHECK (length(idem_key) BETWEEN 8 AND 128),
-  company_id     uuid NULL,
-  method         text NOT NULL,
-  path           text NOT NULL,
-  request_hash   bytea NOT NULL,          -- SHA-256 of canonical body
+  idem_key       text NOT NULL CHECK (length BETWEEN 8 AND 128 AND idem_key ~ '^[A-Za-z0-9_.:-]+$'),
+  request_hash   bytea NOT NULL CHECK (octet_length(request_hash) = 32),
+                                          -- SHA-256 of method, path, query and canonical body (covers what
+                                          -- separate method/path/company columns would)
   status         text NOT NULL CHECK (status IN ('IN_PROGRESS','COMPLETED')),
-  response_status smallint NULL,
-  response_body  jsonb NULL,
-  response_headers jsonb NULL,
+  response_status smallint NULL,          -- required when COMPLETED
+  response_body  json NULL,               -- json, not jsonb: replayed byte for byte
+  response_headers jsonb NULL,            -- ETag, Location
   created_at     timestamptz NOT NULL DEFAULT now(),
   expires_at     timestamptz NOT NULL,    -- created_at + 24h
   PRIMARY KEY (user_id, idem_key)
@@ -519,6 +525,7 @@ inventory.settings (company_id uuid PK → org.companies,
   costing_method text NOT NULL DEFAULT 'MOVING_AVERAGE' CHECK (costing_method IN ('MOVING_AVERAGE')),  -- FIFO: future ADR
   allow_negative_stock boolean NOT NULL DEFAULT false CHECK (allow_negative_stock = false),            -- v1: not supported
   over_receipt_tolerance_percent numeric(7,4) NOT NULL DEFAULT 0,
+  adjustment_approval_threshold numeric(19,4) NULL CHECK (>= 0),   -- INV-7: |value| above it needs inventory.adjustment.approve; NULL = none
   + std (id omitted))
 
 inventory.uom_categories (id, code text UNIQUE, name)                        -- global, e.g. UNIT, WEIGHT, LENGTH, VOLUME, TIME
@@ -581,7 +588,7 @@ inventory.stock_movements (id, company_id C, number text NULL,      -- assigned 
   status text NOT NULL CHECK (IN ('DRAFT','POSTED','CANCELLED')),
   movement_date date NOT NULL,                                       -- accounting date for valuation
   warehouse_id uuid NOT NULL → warehouses, dest_warehouse_id uuid NULL → warehouses,
-  partner_id uuid NULL → partners.partners,
+  partner_id uuid NULL,                     -- → partners.partners once Partners exists (Phase 6, ADR-035); validated by the calling module
   reason_code_id uuid NULL → reason_codes,
   source_module text NULL, source_type text NULL, source_id uuid NULL, source_number text NULL,
   reversal_of_id uuid NULL → stock_movements UNIQUE,
@@ -589,8 +596,13 @@ inventory.stock_movements (id, company_id C, number text NULL,      -- assigned 
   posted_at timestamptz NULL, posted_by uuid NULL, notes text NULL, + std,
   UNIQUE (company_id, number),
   CHECK ((status = 'POSTED') = (number IS NOT NULL AND posted_at IS NOT NULL)),
+  CHECK (source_module, source_type, source_id all NULL or all NOT NULL),
+  CHECK (dest_warehouse_id only for TRANSFER, TRANSFER_SHIP, TRANSFER_RECEIVE and REVERSAL),
   CHECK (movement_type NOT IN ('ADJUSTMENT','SCRAP','COUNT_ADJUSTMENT') OR reason_code_id IS NOT NULL))
-  -- ix (company_id, source_module, source_type, source_id); ix (company_id, movement_date)
+  -- partial unique (company_id, source_module, source_type, source_id) WHERE source_id IS NOT NULL
+  --   AND status <> 'CANCELLED' AND movement_type <> 'REVERSAL'      (a source document moves stock once)
+  -- partial unique (related_movement_id) WHERE movement_type = 'TRANSFER_RECEIVE' AND status <> 'CANCELLED'
+  -- ix (company_id, movement_date)
 
 inventory.stock_movement_lines (id, company_id, movement_id → stock_movements ON DELETE CASCADE (draft only),
   line_no integer NOT NULL, variant_id → product_variants,
@@ -600,6 +612,7 @@ inventory.stock_movement_lines (id, company_id, movement_id → stock_movements 
   unit_cost_base numeric(19,6) NULL CHECK (unit_cost_base IS NULL OR unit_cost_base >= 0),  -- required for inbound from outside (receipts, opening, positive adjustments); computed for outbound
   reference_unit_cost_base numeric(19,6) NULL,   -- caller-supplied cost of the originating document (PURCHASE_RETURN: original receipt unit cost) for GRNI clearing
   source_line_id uuid NULL,
+  reservation_id uuid NULL → stock_reservations,   -- SALES_ISSUE: the line's own reservation, consumed at posting (INV-2)
   reversal_of_line_id uuid NULL → stock_movement_lines,
   + std, UNIQUE (movement_id, line_no),
   CHECK (from_location_id IS NOT NULL OR to_location_id IS NOT NULL),
@@ -647,9 +660,13 @@ inventory.item_valuations (company_id, variant_id → product_variants,
   CHECK (quantity_base > 0 OR total_value_base = 0))
   -- avg cost = total_value_base / quantity_base (computed, never stored)
 
-inventory.stock_counts (id, company_id C, number, warehouse_id, count_date date,
+inventory.stock_counts (id, company_id C, number,     -- numbered at start (STOCK_COUNT sequence)
+  warehouse_id, count_date date,
   status text CHECK (IN ('DRAFT','IN_PROGRESS','COMPLETED','POSTED','CANCELLED')),
-  adjustment_movement_id uuid NULL → stock_movements, + std)
+  reason_code_id uuid NULL → reason_codes,           -- COUNT reason, required at posting (INV-7)
+  notes text NULL,
+  adjustment_movement_id uuid NULL → stock_movements,  -- NULL when the count found no differences
+  CHECK (status = 'POSTED' OR adjustment_movement_id IS NULL), + std)
 inventory.stock_count_lines (id, company_id, stock_count_id, variant_id, location_id,
   system_quantity_base numeric(18,6) NOT NULL,     -- snapshot at count start
   counted_quantity_base numeric(18,6) NULL CHECK (counted_quantity_base >= 0), + std,
@@ -1294,7 +1311,7 @@ System postings (event listeners) use exactly the same sequence inside the publi
 ### 8.2 Inventory
 
 - `trg_inventory_transactions_append_only`: BEFORE UPDATE OR DELETE → raise. (Belt-and-braces with the REVOKE.)
-- `trg_stock_movement_posted_immutable`: blocks changes to POSTED movements and their lines.
+- `trg_stock_movement_posted_immutable` / `trg_stock_movement_lines_posted_immutable`: block changes to POSTED (and CANCELLED) movements and their lines, raising `check_violation` with constraint `ck_stock_movements__immutable` / `ck_stock_movement_lines__immutable` (→ `409 INVALID_STATE`). Posting itself is the one allowed DRAFT → POSTED update.
 - `trg_product_base_uom_locked`: blocks changing `products.base_uom_id` when inventory transactions exist for any of the product's variants.
 - `trg_category_path`: maintains `product_categories.path` (ltree) and prevents cycles.
 - `trg_location_tree`: prevents cycles and ensures `parent.warehouse_id = child.warehouse_id`.
@@ -1318,6 +1335,8 @@ System postings (event listeners) use exactly the same sequence inside the publi
 | Close period | period `FOR UPDATE`; checks for no drafts in the period | |
 | Stock out (issue/transfer/return to supplier) | `warehouse_stock` rows `FOR UPDATE` (ordered by variant_id) → `stock_balances` rows `FOR UPDATE` (ordered by variant_id, location_id) → `item_valuations` rows `FOR UPDATE` (ordered by variant_id) | Check availability (on_hand − reserved, unless consuming own reservation) after locking. Rows that are missing are created with `INSERT … ON CONFLICT DO NOTHING` and then locked. |
 | Stock in (receipt/return from customer/positive adjustment) | Same order. The valuation row is locked to update the average cost. | |
+| Post a stock movement (every type, including reversals and count adjustments) | movement header `FOR UPDATE` → variants, locations and warehouses `FOR SHARE` → `warehouse_stock` → `stock_reservations` → `stock_balances` → `item_valuations` (each `FOR UPDATE`, in key order) → `document_sequences` | ARCHITECTURE.md §6.2. The whole movement is checked on the locked state before anything is written, so a failing line leaves no partial effect and consumes no number. |
+| Post a stock count | count header `FOR UPDATE` → `warehouse_stock` → `stock_balances` (read the current quantities) → then the movement posting above | The differences are computed from locked rows, so no movement can slip in between. |
 | Reserve stock | `warehouse_stock` `FOR UPDATE` → insert reservation | |
 | Release/consume reservation | `warehouse_stock` `FOR UPDATE` → reservation `FOR UPDATE` | |
 | Allocate payment | `open_items` `FOR UPDATE` (ordered by id) → payment `FOR UPDATE` | |
@@ -1342,6 +1361,7 @@ Deadlock handling: the retry policy in ARCHITECTURE.md §6.2. `lock_timeout = '5
 - Posting during a period close either completes before the close or fails with `PERIOD_CLOSED`.
 - Two system administrators disabling each other concurrently leave exactly one (`UserAdministrationIntegrationTest`, Phase 3).
 - Crossing department moves never form a cycle; concurrent overlapping assignments of one employee leave exactly one (Phase 4).
+- Inventory (Phase 5, `InventoryConcurrencyIntegrationTest`): parallel issues, reserve against issue, crossing transfers, double posting of one draft, concurrent requests with one idempotency key, and gapless numbering under load. After each, the invariant check is clean.
 
 ---
 
@@ -1366,7 +1386,7 @@ Deadlock handling: the retry policy in ARCHITECTURE.md §6.2. `lock_timeout = '5
 
 ## 11. Reporting views (published contracts)
 
-Each module publishes read-only views prefixed `v_rpt_` in its own schema. They are granted to `erp_reporting`. Changing a view's columns is a breaking change, handled with a new view name and a deprecation period.
+Each module publishes read-only views prefixed `v_rpt_` in its own schema. They are granted to `erp_reporting`. Changing a view's columns is a breaking change, handled with a new view name and a deprecation period. The views are created together with their consumer, the reporting module, in Phase 10 (ADR-035), so their columns are fixed against real reports.
 
 | View | Owner | Grain / columns |
 |---|---|---|
@@ -1388,10 +1408,10 @@ All views respect RLS, because they are `security_invoker = true` views.
 
 ## 12. Seed data
 
-- **Global:** currencies (ISO 4217 with minor units), countries, UoM categories and units (EA, BOX, KG, G, L, ML, M, CM, HR), the permission catalogue and system roles (SECURITY.md §4.3).
+- **Global:** currencies (ISO 4217 with minor units), countries, UoM categories and units (`R__seed_inventory_uoms.sql`: UNIT EA, PAIR, DOZ; WEIGHT KG, G, T, LB; LENGTH M, CM, MM, KM, FT; VOLUME L, ML, M3; TIME H, DAY. A box is product-specific, so it is a product conversion, not a global unit), the permission catalogue and system roles (SECURITY.md §4.3).
 - **On company creation** (`org.company.created`, async and idempotent):
   - default branch `MAIN`
-  - `inventory.settings`, `procurement.settings` and `sales.settings` with their defaults
+  - `inventory.settings`, `procurement.settings` and `sales.settings` with their defaults (Inventory needs no row: absent settings mean the defaults, ADR-035)
   - a default warehouse with RECEIVING, STOCK and SHIPPING locations
   - accounting: journals (GEN, SAL, PUR, BNK, CSH, INV, PAY, CLS, OPN), a **chart of accounts template** chosen at company creation (`STANDARD_SME`; see the template in PRODUCT_SPEC.md §8.2), default account mappings, and the current fiscal year with 12 monthly periods (OPEN)
 - Seeding is idempotent, so re-running it is safe.

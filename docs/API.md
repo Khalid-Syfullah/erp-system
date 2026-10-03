@@ -137,12 +137,15 @@ Master data is never deleted once referenced. It is deactivated with `POST /…/
 | `INVALID_STATE` | 409 | Action not allowed in the current state |
 | `RESOURCE_IN_USE` | 409 | Cannot delete referenced master data |
 | `RESOURCE_BUSY` | 409 | Lock timeout; retry |
-| `DUPLICATE_CODE`, `DUPLICATE_SKU`, `DUPLICATE_SUPPLIER_INVOICE`, `DUPLICATE_EMAIL` | 409 | Unique violations |
+| `DUPLICATE_CODE`, `DUPLICATE_SKU`, `DUPLICATE_BARCODE`, `DUPLICATE_VARIANT`, `DUPLICATE_SUPPLIER_INVOICE`, `DUPLICATE_EMAIL` | 409 | Unique violations (`DUPLICATE_VARIANT`: the attribute combination exists for the product) |
+| `DUPLICATE_SOURCE_DOCUMENT` | 409 | The source document (goods receipt, delivery, return, count) already has its stock movement |
 | `IDEMPOTENCY_KEY_REUSED` | 409 | Same key, different request |
 | `IDEMPOTENCY_IN_PROGRESS` | 409 | The original request is still executing |
 | `PRECONDITION_FAILED` / `PRECONDITION_REQUIRED` | 412 / 428 | ETag handling |
 | `INSUFFICIENT_STOCK` | 422 | Stock check failed |
 | `RESERVED_STOCK_CONFLICT` | 422 | Adjustment would reduce stock below the reserved quantity |
+| `REVERSAL_NOT_POSSIBLE` | 422 | The reversal would leave the item's valuation invalid (its stock was consumed or revalued since) |
+| `ADJUSTMENT_APPROVAL_REQUIRED` | 403 | The adjustment's value exceeds the company's approval threshold; `inventory.adjustment.approve` is needed to post it (INV-7) |
 | `UOM_NOT_CONVERTIBLE` | 422 | No conversion path |
 | `PERIOD_CLOSED` | 422 | Accounting date in a closed, missing or soft-closed (without permission) period |
 | `UNBALANCED_ENTRY` | 422 | Debits ≠ credits |
@@ -237,9 +240,10 @@ Response envelope:
   - `POST` create of documents that may post immediately: payments, expenses, journal entries with `postImmediately`, stock adjustments with `postImmediately`.
   - All `POST` action endpoints that post, approve, pay, void, reverse or allocate.
 
-  It is **optional but honored** on all other POSTs.
-- Behaviour, per (authenticated principal, key), stored in `platform.idempotency_keys` for 24 hours:
-  - **First request:** record it as IN_PROGRESS with a request hash (method, path and canonical body), execute it, then store the status, headers and body as COMPLETED **in the same transaction** as the business change. On a failure response with a 4xx code, the key is stored with that response. On a 5xx response or a transaction rollback, the key row is rolled back, so a retry executes again.
+  It is **optional but honored** on the other POSTs of business documents that run through the idempotency executor (ADR-035). From Phase 5 that is stock movement creation; Procurement, Sales and Accounting add theirs. Master-data POSTs ignore the header.
+- Keys match `^[A-Za-z0-9_.:-]{8,128}$`; a missing key on a `[I]` endpoint or a malformed key is `400 BAD_REQUEST`.
+- Behaviour, per (authenticated principal, key), stored in `platform.idempotency_keys` for 24 hours (purged hourly):
+  - **First request:** record it as IN_PROGRESS with a request hash (SHA-256 of method, path, query and the canonical JSON body with sorted keys), execute it, then store the status, the `ETag` and `Location` headers and the body (verbatim) as COMPLETED **in the same transaction** as the business change. On a failure response with a 4xx code, the business change rolls back and the key is then stored with that response in its own transaction, except `RESOURCE_BUSY` and the `IDEMPOTENCY_*` codes, which stay retryable. On a 5xx response or a transaction rollback, the key row is rolled back, so a retry executes again. Serialization failures and deadlocks are retried up to three times before answering (ARCHITECTURE.md §6.2).
   - **Same key and same hash, COMPLETED:** replay the stored response with the header `Idempotent-Replayed: true`.
   - **Same key, different hash:** `409 IDEMPOTENCY_KEY_REUSED`.
   - **Same key, still IN_PROGRESS:** `409 IDEMPOTENCY_IN_PROGRESS`. A concurrent duplicate blocks on the key row and then sees the result.
@@ -355,7 +359,7 @@ These endpoints have no company in the path. Their permissions are global and he
 | `GET/POST {c}/exchange-rates` (`{currencyCode, rateDate, rate}`, rate as a decimal string: 1 unit of the currency in base currency; not for the base currency) · `GET …/{id}` · `PATCH …/{id}` [A] (`rate`) · `DELETE …/{id}` [A] · `GET {c}/exchange-rates/lookup?currencyCode=&date=` (latest rate on or before the date; base currency → 1; `422 EXCHANGE_RATE_MISSING`) | `org.exchange_rate.read` / `org.exchange_rate.manage` |
 | `GET/POST {c}/tax-codes` (`{code, name, scope, ratePercent, isExempt?, validFrom?, validTo?}`) · `GET/PATCH …/{id}` [A] (rate, scope and exemption frozen once used: `409 RESOURCE_IN_USE`) · `POST …/{deactivate|activate}` [A] | `org.tax_code.read` / `org.tax_code.manage` |
 | `GET/POST {c}/payment-terms` (`{code, name, dueDays, dueBasis?}`) · `GET/PATCH …/{id}` [A] · `POST …/{deactivate|activate}` [A] · `GET …/{id}/due-date?documentDate=` | `org.payment_terms.read` / `org.payment_terms.manage` |
-| `GET/PUT {c}/settings/numbering` [A] (Phase 5, with document numbering; ADR-033). Company-level settings `roundingMode` and `taxRounding` are part of `PATCH {c}` | `org.company.manage` |
+| `GET/PUT {c}/settings/numbering` [A] (`formats: {documentType: {prefix, padding}}`; `{FY}` in a prefix renders the fiscal-year label, ADR-035; types left out use their defaults). Company-level settings `roundingMode` and `taxRounding` are part of `PATCH {c}` | `org.company.manage` |
 | `GET {c}/audit-log`, `GET {c}/audit-log?filter[entityType]=…&filter[entityId]=…` | `admin.audit.read` |
 | `GET {c}/jobs/{id}` | job owner or `admin.system.read` |
 | `POST {c}/files` · attachments sub-resources on documents | owning entity permissions |
@@ -375,21 +379,25 @@ These endpoints have no company in the path. Their permissions are global and he
 
 | Method & path | Permission |
 |---|---|
-| `GET/POST {c}/product-categories` · `GET/PATCH …/{id}` [A] | `inventory.product.read` / `inventory.product.manage` |
+| `GET {v1}/reference/uoms` · `GET {v1}/reference/uom-categories` (global seed) | authenticated |
+| `GET/POST {c}/product-categories` · `GET/PATCH …/{id}` [A] · `POST …/{id}/{activate|deactivate}` [A] | `inventory.product.read` / `inventory.product.manage` |
 | `GET/POST {c}/products` · `GET/PATCH …/{id}` [A] · `POST …/{id}/{archive|unarchive}` [A] | same |
-| `GET/POST {c}/products/{id}/variants` · `GET/PATCH {c}/variants/{id}` [A] · `GET {c}/variants?q=` (SKU or barcode lookup) | same |
-| `GET/POST/DELETE {c}/products/{id}/uom-conversions[/{convId}]` | `inventory.product.manage` |
-| `GET/POST {c}/product-attributes` (+ values) | `inventory.product.manage` |
-| `GET/POST {c}/warehouses` · `GET/PATCH …/{id}` [A] · `GET/POST {c}/warehouses/{id}/locations` · `PATCH {c}/locations/{id}` [A] | `inventory.warehouse.read` / `inventory.warehouse.manage` |
+| `GET/POST {c}/products/{id}/variants` · `GET/PATCH {c}/variants/{id}` [A] · `GET {c}/variants?q=` (SKU, barcode or name lookup) | same |
+| `GET {c}/products/{id}/uom-conversions` · `POST/DELETE …[/{convId}]` | `inventory.product.read` / `inventory.product.manage` |
+| `GET {c}/product-attributes[/{id}]` · `POST {c}/product-attributes` · `POST …/{id}/values` | `inventory.product.read` / `inventory.product.manage` |
+| `GET/POST {c}/warehouses` · `GET/PATCH …/{id}` [A] · `POST …/{id}/{activate|deactivate}` [A] · `GET/POST {c}/warehouses/{id}/locations` · `GET/PATCH {c}/locations/{id}` [A] · `POST {c}/locations/{id}/{activate|deactivate}` [A] | `inventory.warehouse.read` / `inventory.warehouse.manage` |
 | `GET/POST {c}/reason-codes` | `inventory.adjustment.manage` |
+| `GET/PUT {c}/settings/inventory` [A] (`overReceiptTolerancePercent`, `adjustmentApprovalThreshold`) | `inventory.settings.manage` |
 | `GET {c}/stock-levels?filter[warehouseId]=…&filter[variantId]=…` (on hand, reserved, available) | `inventory.stock.read` |
 | `GET {c}/stock-levels/by-location` · `GET {c}/inventory-transactions` (ledger) | `inventory.stock.read` |
-| `GET {c}/stock-valuation?asOf=` | `inventory.valuation.read` |
-| `GET/POST {c}/stock-movements` (types: OPENING, TRANSFER, TRANSFER_SHIP, ADJUSTMENT, SCRAP; receipts and issues are created **only** through Procurement and Sales) · `GET/PATCH/DELETE …/{id}` [A] | `inventory.movement.read` / `inventory.movement.create` |
-| `POST {c}/stock-movements/{id}/post` [A][I] | `inventory.movement.post` (+ `inventory.adjustment.approve` above the threshold for adjustments) |
-| `POST {c}/stock-movements/{id}/cancel` [A] · `POST …/{id}/reverse` [A][I] | `inventory.movement.post` / `inventory.movement.reverse` |
+| `GET {c}/stock-valuation?asOf=&variantId=` | `inventory.valuation.read` |
+| `GET/POST {c}/stock-movements` (types: OPENING, TRANSFER, TRANSFER_SHIP, ADJUSTMENT, SCRAP; receipts and issues are created **only** through Procurement and Sales; `postImmediately` requires [I]) · `GET/PATCH/DELETE …/{id}` [A] | `inventory.movement.read` / `inventory.movement.create` (+ `inventory.adjustment.manage` for ADJUSTMENT and SCRAP) |
+| `POST {c}/stock-movements/{id}/post` [A][I] | `inventory.movement.post` (+ `inventory.adjustment.manage` for adjustments, + `inventory.adjustment.approve` above the threshold) |
+| `POST {c}/stock-movements/{id}/cancel` [A] · `POST …/{id}/reverse` [A][I] | `inventory.movement.post` (+ `inventory.adjustment.manage` for adjustments) / `inventory.movement.reverse` |
 | `POST {c}/stock-movements/{id}/receive` [A][I] (TRANSFER_SHIP → creates and posts TRANSFER_RECEIVE) | `inventory.movement.post` |
-| `GET/POST {c}/stock-counts` · `PATCH …/{id}` [A] · `PUT …/{id}/lines` [A] · `POST …/{id}/{start|complete|post|cancel}` [A][I for post] | `inventory.count.manage` / `inventory.count.post` |
+| `GET/POST {c}/stock-counts` · `GET/PATCH …/{id}` [A] · `PUT …/{id}/lines` [A] · `POST …/{id}/{start|complete|post|cancel}` [A][I for post] | `inventory.count.manage` / `inventory.count.post` |
+
+Branch-restricted users see and act only on warehouses of their branches (movements: source or destination warehouse; counts: the warehouse); others answer `404`, and references to them in bodies `422`.
 
 ### 17.6 Procurement
 

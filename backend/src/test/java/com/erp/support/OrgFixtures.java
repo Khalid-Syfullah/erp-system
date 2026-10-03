@@ -31,7 +31,10 @@ public class OrgFixtures {
         }
     }
 
-    private static final JsonMapper JSON = JsonMapper.builder().build();
+    public static final String MERGE_PATCH = "application/merge-patch+json";
+
+    public static final JsonMapper JSON_MAPPER = JsonMapper.builder().build();
+    private static final JsonMapper JSON = JSON_MAPPER;
 
     private final MockMvc mvc;
     private final AuthTestSupport auth;

@@ -71,6 +71,8 @@ dependencies {
     implementation(libs.bouncycastle.bcprov)
     // Cluster-safe recurring maintenance jobs (ARCHITECTURE.md §2).
     implementation(libs.db.scheduler.starter)
+    // OpenAPI document (API only, no UI). The runtime endpoint is off; OpenApiContractTest generates the spec.
+    implementation(libs.springdoc.webmvc.api)
     // Only the module annotations at runtime; verification and documentation are test-only.
     implementation(libs.spring.modulith.api)
     // Compile-time access to PSQLException (constraint names in DatabaseErrorTranslator).
@@ -170,6 +172,10 @@ val generateJooq = tasks.register("generateJooq") {
                                             .withUserType("org.jooq.postgres.extensions.types.Inet")
                                             .withBinding("org.jooq.postgres.extensions.bindings.InetBinding")
                                             .withIncludeTypes("inet"),
+                                        ForcedType()
+                                            .withUserType("org.jooq.postgres.extensions.types.Ltree")
+                                            .withBinding("org.jooq.postgres.extensions.bindings.LtreeBinding")
+                                            .withIncludeTypes("ltree"),
                                     )
                             )
                             .withGenerate(

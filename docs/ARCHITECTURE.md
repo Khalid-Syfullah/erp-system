@@ -384,7 +384,7 @@ sequenceDiagram
   6. `platform.document_sequences`. Numbers are taken **late**, and the lock is held until commit. When one transaction needs several numbers, they are taken in the natural flow order: stock movement → operational document → journal entry.
 
   `accounting.periods FOR SHARE` may be taken at any point. It conflicts only with period close (`FOR UPDATE`), and period close acquires no other locks, so it cannot take part in a deadlock cycle.
-- A transaction retry decorator retries up to **3 times** with jitter on SQLSTATE `40001` (serialization failure) and `40P01` (deadlock). It applies only to methods marked `@RetryableTransaction`, all of which must be idempotent within the transaction.
+- A transaction retry (`platform.tx.TransactionRetry`) retries up to **3 times** with jitter on SQLSTATE `40001` (serialization failure) and `40P01` (deadlock). It wraps the **whole** transaction programmatically and refuses to run inside one (ADR-035). The idempotency executor applies it to every `[I]` command, whose work is idempotent within its transaction. Elsewhere a deadlock victim answers `409 RESOURCE_BUSY`, and the client retries.
 - **Statement timeout** is 30 s for API transactions and configurable for jobs. **Lock timeout** is 5 s; when it is exceeded, the API returns `409 CONFLICT` with code `RESOURCE_BUSY`.
 - **No remote calls inside a transaction**, whether HTTP, SMTP or S3. Those go to asynchronous listeners or happen before or after the transaction. File uploads are written to object storage first and then referenced in the transaction; a cleanup job removes orphans.
 - Long-running batch operations (payroll calculation, period close, imports) run as db-scheduler jobs. They process in **chunks, one transaction per chunk**, and keep their progress in a job state table.
@@ -451,6 +451,9 @@ Allowed transitions are also enforced in the database where practical. Where it 
 - `stock_balances` equals the sum of the inventory ledger for each (variant, location).
 - `warehouse_stock.on_hand` equals the sum of `stock_balances` over the warehouse's INTERNAL, RECEIVING and SHIPPING locations.
 - `item_valuations` reconciles with the ledger value.
+- `warehouse_stock.reserved` equals the sum of ACTIVE `stock_reservations`.
+
+  The four inventory checks run from Phase 5 (`InventoryInvariantCheck`, db-scheduler task `inventory-invariants`, daily 02:30). A mismatch writes an `INVARIANT_VIOLATION` audit record and logs an error; alerting follows in Phase 12.
 - The inventory GL account balance equals the stock valuation (once Accounting exists).
 - AR/AP control accounts equal the sum of open items.
 
@@ -498,7 +501,7 @@ The "Sync consumers" column lists consumers that run in the publisher's transact
 |---|---|---|---|---|
 | `org.company.created` | Org | companyId, baseCurrency, country | — | Accounting (seed default CoA template, if configured; idempotent), Admin (seed settings) |
 | `auth.user.locked` | Auth | userId, reason | — | Notifications |
-| `inventory.stock_movement.posted` | Inventory | movementId, number, movementType (`OPENING`, `PURCHASE_RECEIPT`, `PURCHASE_RETURN`, `SALES_ISSUE`, `SALES_RETURN`, `TRANSFER`, `TRANSFER_SHIP`, `TRANSFER_RECEIVE`, `ADJUSTMENT`, `SCRAP`, `COUNT_ADJUSTMENT`, `REVERSAL`), accountingDate, sourceRef {module, type, id, number}, partnerId?, lines[{variantId, categoryId, warehouseId, branchId, locationId, quantityBase, unitCostBase, valueBase, referenceValueBase? (PURCHASE_RETURN: original receipt value)}], reasonCodeId? | Accounting (stock valuation entries) | Reporting projections |
+| `inventory.stock_movement.posted` (v1, published synchronously in the posting transaction, ADR-035) | Inventory | movementId, number, movementType (`OPENING`, `PURCHASE_RECEIPT`, `PURCHASE_RETURN`, `SALES_ISSUE`, `SALES_RETURN`, `TRANSFER`, `TRANSFER_SHIP`, `TRANSFER_RECEIVE`, `ADJUSTMENT`, `SCRAP`, `COUNT_ADJUSTMENT`, `REVERSAL`), accountingDate, sourceRef {module, type, id, number}?, partnerId?, reasonCodeId?, reversalOfId?, lines[{lineId, variantId, categoryId, warehouseId, branchId, locationId, quantityBase, unitCostBase, valueBase, referenceValueBase? (PURCHASE_RETURN: original receipt value)}]: one line per ledger row; quantities and values signed (+ in, − out), values in base-currency minor units | Accounting (stock valuation entries) | Reporting projections |
 | `procurement.goods_receipt.posted` | Procurement | receiptId, poId, supplierId, lines[{poLineId, variantId, qty, poUnitPrice, currency}] | — | Notifications |
 | `procurement.supplier_bill.posted` | Procurement | billId, number, supplierId, supplierGroupId, documentDate, accountingDate, dueDate, currency, exchangeRate, totals (doc + base), lines[{type: STOCK_RECEIVED/SERVICE/EXPENSE, variantId?, categoryId?, expenseAccountKey?, receiptValueBase?, netDoc, netBase, taxCodeId, branchId, departmentId}], taxLines[{taxCodeId, taxDoc, taxBase}] | Accounting (AP entry + AP open item) | Notifications |
 | `procurement.debit_note.posted` | Procurement | Same shape as the bill, plus originalBillId | Accounting | — |

@@ -31,7 +31,7 @@ flowchart LR
 | 2 | Foundation (platform kernel, tooling, org core) | 1 | L (done) |
 | 3 | Authentication and RBAC | 2 | L (done) |
 | 4 | Organization management (incl. HR organizational slice) | 3 | M (done) |
-| 5 | Inventory | 4 | XL |
+| 5 | Inventory | 4 | XL (done) |
 | 6 | Procurement | 5 | L |
 | 7 | Sales | 5, 6 (patterns) | L |
 | 8 | Accounting | 4–7 (events) | XL |
@@ -362,39 +362,72 @@ A phase is done only when **all** of the following hold:
 | CSV import framework | Phase 6 | Partner import (opening stock CSV in Phase 5 uses a simple importer, later moved onto the framework) |
 | S3 file port and MinIO | Phase 6 | Supplier bill attachments |
 
-### Phase 5 — Inventory
+### Phase 5 — Inventory ✅
 
 **Prerequisites:** Phase 4.
 
-**Deliverables:**
+**Scope** (ADR-035): the Phase 5 brief (product master, warehouses, the stock engine) and the platform carry-overs, except those whose first consumer comes later (table at the end of this section).
 
-- Carried over from Phase 2 (ADR-025): gapless numbering (`platform.document_sequences`, with the 50-way concurrency test) and the transaction retry decorator.
-- Carried over from Phase 4 (ADR-033): the idempotency filter, store and purge; the Event Publication Registry with `processed_events` and the `org.company.created` seeding pipeline; `platform.money`; numbering prefixes (`GET/PUT {c}/settings/numbering`); OpenAPI with `x-permission`, and the IDOR suite switched to OpenAPI introspection.
-- **Catalog:** UoM categories and units (global seed), product categories (ltree), products, attributes, variants (default variant automation, attribute-combination uniqueness), product UoM conversions with the conversion service, archive rules.
-- Warehouses (seeded default locations), locations (tree, types), reason codes, inventory settings.
-- **Stock engine:**
-  - movements (DRAFT → POSTED → reversal)
-  - the inventory ledger
-  - `stock_balances` and `warehouse_stock`
-  - the locking protocol (DATABASE.md §9)
-  - the moving-average costing engine (INV-4/INV-5)
-  - reservations (reserve, release, consume)
-  - two-step transfers through TRANSIT
-  - adjustments with approval threshold
-  - opening stock, including CSV import
-- Physical counts (snapshot, count, complete, post).
-- **The `InventoryFacade` used by Procurement and Sales:** `receive`, `issue`, `returnToSupplier`, `returnFromCustomer`, `reserve`, `release`, `consumeReservation`, `availability`, `convertQuantity`, `variantInfo`.
-- Publish `inventory.stock_movement.posted`, with the full payload from ARCHITECTURE.md §7 and a contract snapshot test.
-- `v_rpt_*` views for inventory (DATABASE.md §11).
-- Nightly invariant job for the inventory checks (ARCHITECTURE.md §6.8).
+**Delivered:**
 
-**Exit criteria:**
+1. **Platform:**
+   - gapless numbering (`platform.document_sequences`, fiscal-year scopes) with company formats (`GET/PUT {c}/settings/numbering`, `platform.numbering_settings`)
+   - idempotency (`platform.idempotency_keys`, executor with replay, purge job), applied to every `[I]` endpoint of Inventory
+   - `TransactionRetry` (40001/40P01, three attempts)
+   - `platform.money.RoundingPolicy`
+   - domain event metadata
+   - the OpenAPI document with `x-permission` and problem responses, generated and checked by `OpenApiContractTest`
+2. **Catalog:**
+   - global UoM categories and units (repeatable seed)
+   - product categories (ltree tree, cycle guard)
+   - products (types, units, tax codes, archive rules, base unit locked once stock moved)
+   - attributes and values
+   - variants (default variant automation, unique attribute combinations, SKU and barcode uniqueness)
+   - product UoM conversions with the conversion rules of ADR-035
+3. **Warehouses:** branch-owned warehouses with seeded RECEIVING, SHIPPING, STOCK and TRANSIT locations, location trees within one warehouse, activation rules (no deactivation with stock or drafts), reason codes, inventory settings (approval threshold, over-receipt tolerance).
+4. **Stock engine:**
+   - movements DRAFT → POSTED, cancel, delete, reversal by mirror
+   - all twelve movement types: OPENING, TRANSFER, TRANSFER_SHIP and TRANSFER_RECEIVE through TRANSIT, ADJUSTMENT, SCRAP, COUNT_ADJUSTMENT, REVERSAL, and the facade-only receipt, return and issue types
+   - the append-only ledger, `stock_balances`, `warehouse_stock` and `item_valuations` under the lock order of ARCHITECTURE.md §6.2
+   - moving-average valuation without residue (INV-4/INV-5)
+   - reservations consumed by delivery lines
+   - adjustment approval threshold (INV-7)
+   - numbers taken last, so a failed posting consumes none
+5. **Physical counts:** create, edit, start (snapshot), enter, complete, post (difference against the current quantity under lock), cancel.
+6. **`InventoryFacade`:** `receive`, `returnFromCustomer`, `issue`, `returnToSupplier`, `reserve`, `release`, `availability`, `convertQuantity`, `variantInfo`. Duplicate source documents are refused.
+7. **Event** `inventory.stock_movement.posted` v1, published synchronously in the posting transaction, with a contract snapshot test.
+8. **Nightly invariant job** `inventory-invariants`: ledger = balances, balances = warehouse stock, ledger value = valuation, reservations = reserved. A mismatch writes an `INVARIANT_VIOLATION` audit record.
+9. **Security:**
+   - every endpoint uses the catalogued `inventory.*` permissions
+   - adjustments additionally need `inventory.adjustment.manage`
+   - branch-restricted users see their branches' warehouses only
+   - every mutation is audited
+   - RLS and composite company FKs on all new tables
+   - the DB rejects ledger updates and deletes, changes to posted movements, negative stock and residual value
+10. **Tests:** 574 in 65 classes (the property test counts its 200 repetitions). New in this phase:
+    - movement, facade, catalog, warehouse/count, access, ledger-integrity and idempotency/numbering suites
+    - `InventoryConcurrencyIntegrationTest`: parallel issues, reserve against issue, crossing transfers, double posting, one idempotency key, gapless numbering under load; invariant check after each
+    - property-based valuation test (200 random sequences)
+    - unit tests for units, movement types, state machines, number formats, fiscal years, rounding and retry
+    - the OpenAPI contract test
 
-- Concurrency tests pass: parallel issues of one SKU never go negative, and parallel reserve and issue are consistent.
-- Property-based tests: for random sequences of receipts, issues and transfers, ledger = balances = valuation, and value is never negative or left as residue when the quantity reaches 0.
-- Reversal correctness is proven.
+    Coverage: inventory.domain 99%, inventory.application 83%, platform.numbering 95%, platform.idempotency 85%, platform.tx 90%, platform.money 100%.
 
-**Risks:** lock contention on hot SKUs. Mitigation: measure in Phase 12, and keep transactions short.
+**Exit criteria (met):**
+
+- Parallel issues of one SKU never go negative, and parallel reserve and issue are consistent.
+- For random sequences of receipts and issues, the ledger value equals the valuation, the value is never negative, and nothing remains once the quantity reaches 0. Transfers do not change the valuation, as the API tests show.
+- Reversal correctness: mirrors restore balances and valuation, a reversal happens once, a reversal is not reversed, and consumed stock blocks a reversal.
+
+**Moved to later phases** (ADR-035):
+
+| Item (planned for Phase 5) | Moved to | First consumer |
+|---|---|---|
+| Event Publication Registry, `processed_events`, the `org.company.created` seeding pipeline | Phase 6 | The first asynchronous listener (notifications on `procurement.goods_receipt.posted`) |
+| Opening-stock CSV import | Phase 6 | The CSV import framework |
+| `stock_movements.partner_id` foreign key | Phase 6 | The Partners module |
+| `v_rpt_*` inventory views | Phase 10 | Reporting |
+| Location freeze during counts (optional part of INV-8) | Not planned | — (differences are computed at posting) |
 
 ### Phase 6 — Procurement
 
@@ -402,6 +435,7 @@ A phase is done only when **all** of the following hold:
 
 **Deliverables:**
 
+- Carried over from Phase 5 (ADR-035): the Event Publication Registry with `processed_events` and the `org.company.created` seeding pipeline (with the first asynchronous listener), opening-stock CSV import on the CSV framework, and the foreign key from `inventory.stock_movements.partner_id` to partners.
 - Carried over from Phase 4 (ADR-033): **Partners** (partners, addresses, contacts, encrypted bank accounts with masking, reveal and change notification, customer and supplier profiles, partner groups, `pg_trgm` search), the CSV import framework (dry-run, per-row errors) used for partners, and the S3 file port with MinIO in compose.
 - Procurement settings.
 - Requisitions (approval with SoD, conversion to POs).
@@ -517,6 +551,7 @@ A phase is done only when **all** of the following hold:
 
 **Deliverables:**
 
+- Carried over from Phase 5 (ADR-035): the inventory `v_rpt_*` views (DATABASE.md §11).
 - `reporting` schema, the report catalogue and permission mapping, the reporting read-only DataSource (`erp_reporting` role, optional replica).
 - All reports in PRODUCT_SPEC.md §13, including gross margin and the GRNI reconciliation.
 - **The async export framework:** CSV, XLSX and PDF; CSV-injection-safe; size limits; file expiry.
