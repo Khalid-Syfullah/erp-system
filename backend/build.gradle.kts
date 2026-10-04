@@ -77,6 +77,14 @@ dependencies {
     implementation(libs.spring.modulith.api)
     // Compile-time access to PSQLException (constraint names in DatabaseErrorTranslator).
     implementation(libs.postgresql)
+    implementation(platform(libs.awssdk.bom))
+    implementation(libs.awssdk.s3) {
+        // The JDK's URL connection client is enough; no Netty or Apache HTTP stacks.
+        exclude(group = "software.amazon.awssdk", module = "netty-nio-client")
+        exclude(group = "software.amazon.awssdk", module = "apache-client")
+    }
+    implementation(libs.awssdk.url.connection.client)
+    implementation(libs.openpdf)
     runtimeOnly(libs.micrometer.registry.prometheus)
 
     testImplementation(platform(libs.spring.boot.bom))
@@ -220,6 +228,8 @@ tasks.jar { enabled = false }
 
 tasks.test {
     useJUnitPlatform()
+    // Up to five cached Spring contexts (each with its pool, jOOQ, S3 client) outgrow Gradle's 512 MB default.
+    maxHeapSize = "2g"
     systemProperty("erp.test.bootstrap-sql", bootstrapSql.absolutePath)
     systemProperty("erp.test.postgres-image", postgresImage)
     systemProperty("user.language", "en")

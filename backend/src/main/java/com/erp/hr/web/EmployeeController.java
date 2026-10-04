@@ -1,6 +1,7 @@
 package com.erp.hr.web;
 
 import com.erp.hr.HrPermissions;
+import com.erp.hr.application.Address;
 import com.erp.hr.application.AssignmentView;
 import com.erp.hr.application.EmployeeService;
 import com.erp.hr.application.EmployeeView;
@@ -30,6 +31,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -81,6 +83,12 @@ class EmployeeController {
             @Nullable String terminationReason,
             String status,
             HrRequests.@Nullable AssignmentResponse currentAssignment,
+            @Nullable UUID userId,
+            @Nullable String personalEmail,
+            @Nullable String phone,
+            @Nullable Address address,
+            @Nullable String nationalIdMasked,
+            boolean dateOfBirthSet,
             OffsetDateTime createdAt,
             OffsetDateTime updatedAt,
             int version) {
@@ -99,6 +107,12 @@ class EmployeeController {
                     v.terminationReason(),
                     v.status().name(),
                     HrRequests.AssignmentResponse.from(detail.currentAssignment()),
+                    v.userId(),
+                    v.personalEmail(),
+                    v.phone(),
+                    v.address(),
+                    v.nationalIdLast4() == null ? null : "****" + v.nationalIdLast4(),
+                    v.dateOfBirthSet(),
                     v.createdAt(),
                     v.updatedAt(),
                     v.version());
@@ -106,6 +120,13 @@ class EmployeeController {
     }
 
     record AssignmentList(List<HrRequests.AssignmentResponse> data) {}
+
+    record UserLinkRequest(@NotNull UUID userId) {}
+
+    record RevealedResponse(
+            UUID employeeId,
+            @Nullable LocalDate dateOfBirth,
+            @Nullable String nationalId) {}
 
     @RequiresPermission(HrPermissions.EMPLOYEE_READ)
     @GetMapping
@@ -171,6 +192,34 @@ class EmployeeController {
                 ? null
                 : request.reason().strip();
         return withETag(employees.terminate(employeeId, ifMatch, request.terminationDate(), reason));
+    }
+
+    /** Links a user for self-service (the user must be assigned to the company). */
+    @RequiresPermission(HrPermissions.EMPLOYEE_MANAGE)
+    @PutMapping("/{employeeId}/user")
+    ResponseEntity<EmployeeResponse> linkUser(
+            @PathVariable UUID companyId,
+            @PathVariable UUID employeeId,
+            @RequestHeader(name = EntityTags.IF_MATCH, required = false) @Nullable String ifMatch,
+            @Valid @RequestBody UserLinkRequest request) {
+        return withETag(employees.linkUser(employeeId, ifMatch, request.userId()));
+    }
+
+    @RequiresPermission(HrPermissions.EMPLOYEE_MANAGE)
+    @DeleteMapping("/{employeeId}/user")
+    ResponseEntity<EmployeeResponse> unlinkUser(
+            @PathVariable UUID companyId,
+            @PathVariable UUID employeeId,
+            @RequestHeader(name = EntityTags.IF_MATCH, required = false) @Nullable String ifMatch) {
+        return withETag(employees.linkUser(employeeId, ifMatch, null));
+    }
+
+    /** The decrypted date of birth and national ID; step-up and a {@code VIEW_SENSITIVE} audit record. */
+    @RequiresPermission(HrPermissions.EMPLOYEE_READ_SENSITIVE)
+    @PostMapping("/{employeeId}/reveal")
+    RevealedResponse reveal(@PathVariable UUID companyId, @PathVariable UUID employeeId) {
+        var revealed = employees.reveal(employeeId);
+        return new RevealedResponse(revealed.employeeId(), revealed.dateOfBirth(), revealed.nationalId());
     }
 
     @RequiresPermission(HrPermissions.EMPLOYEE_READ)

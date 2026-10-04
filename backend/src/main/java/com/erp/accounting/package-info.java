@@ -20,7 +20,9 @@
             "procurement :: api",
             "procurement :: events",
             "sales :: api",
-            "sales :: events"
+            "sales :: events",
+            "payroll :: api",
+            "payroll :: events"
         })
 package com.erp.accounting;
 

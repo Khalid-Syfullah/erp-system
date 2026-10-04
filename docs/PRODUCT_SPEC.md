@@ -83,7 +83,7 @@ The following are **out of scope for v1**. Each has a placeholder in the design 
 - Budgeting
 - Multi-rate compound tax and e-invoicing integrations
 - Country-specific statutory payroll packs (only the hook is in scope)
-- Time and attendance
+- Time tracking, shift rosters and attendance-driven pay (basic daily attendance records are in scope, ADR-039)
 - Recruitment
 - CRM pipeline
 - POS
@@ -615,10 +615,14 @@ Clarifications (ADR-037):
   - Leave requests, approved by the manager or HR.
   - Balances are derived from an append-only leave ledger.
   - Public holidays are excluded from day counts. Weekends are configurable per company: default Saturday and Sunday, but configurable for regions with other weekend days.
+- **Leave details (ADR-039):** the leave year is the calendar year; ANNUAL types grant the entitlement at the year start (pro rata by hire month, to half days), MONTHLY types one twelfth per month; the first accrual of a year closes the previous one (its positive balance expires, up to the type's maximum is carried forward). Requests stay within one leave year and count working days of the employee's branch; a half day books 0.5 of a single working day. Submission needs the available balance (balance less other submitted days), approval the balance, unless the type allows a negative balance. HR or the employee's direct or indirect manager decides; nobody decides their own request. Approved leave covering today makes an active employee ON_LEAVE.
+- **Attendance (basic, ADR-039):** one record per employee and day (present, absent, half day, remote, on leave, holiday; clock-in and clock-out times; minutes worked), kept by HR or clocked in and out by the employee in self-service. Payroll does not read it.
+- **Documents and bank accounts:** documents are stored files (downloads audited); bank accounts are field-encrypted, listed masked and revealed only with step-up; payroll pays the primary account.
 - Employee lifecycle: `ONBOARDING → ACTIVE ⇄ ON_LEAVE → TERMINATED`. Termination:
   - closes the current assignment
+  - cancels leave after the termination date
   - deactivates the linked user (through the Auth facade)
-  - flags payroll for final settlement (event)
+  - publishes `hr.employee.terminated`; Payroll ends the compensation at the termination date, so the last regular run pays the prorated final period (ADR-039)
 
 ### 10.2 Rules
 
@@ -659,11 +663,12 @@ stateDiagram-v2
 ```
 
 - Payslips are generated per employee, with lines per component. A PDF is rendered asynchronously and is visible in self-service after POSTED.
+- **Calculation (ADR-039):** asynchronous; the whole run is calculated in one transaction, so its payslips appear together. A run with issues (negative net, missing assignment) is not approved. Approval needs a user other than the one who requested the calculation and not paid in the run. Changing inputs sends a calculated run back to DRAFT. Off-cycle runs pay their own inputs only. FINAL_SETTLEMENT runs are not offered in v1. Pay schedules and payroll are in the base currency; a compensation's base amount is the pay of one full period of its schedule.
 - A bank payment file export (CSV, generic format) is produced for PAID or APPROVED runs. Bank-specific formats are future work.
 
 ### 11.2 Calculation rules
 
-- **PAY-1.** The employees included are those with an active assignment and an effective compensation overlapping the period. Partial periods (hire or termination inside the period) are prorated by **calendar days** by default, or by working days if configured.
+- **PAY-1.** The employees included are those with an active assignment and an effective compensation overlapping the period. Partial periods (hire or termination inside the period) are prorated by **calendar days** by default, or by working days if configured. Proration applies per compensation segment to the base and to FIXED and PERCENT_OF_BASE earnings; FIXED deductions and contributions are not prorated.
 - **PAY-2.** Order of evaluation:
   1. Earnings, by sequence.
   2. Gross.

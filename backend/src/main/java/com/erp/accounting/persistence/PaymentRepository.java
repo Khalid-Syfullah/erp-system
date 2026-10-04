@@ -89,6 +89,50 @@ public class PaymentRepository {
                 .fetchOne(PAYMENTS.ID);
     }
 
+    /**
+     * A payroll disbursement (payment kind OTHER, PRODUCT_SPEC.md §8.6), recorded directly as POSTED
+     * with its journal entry; it has no partner and no open item.
+     */
+    public UUID insertDisbursement(
+            UUID companyId,
+            String number,
+            UUID bankAccountId,
+            java.time.LocalDate paymentDate,
+            String currencyCode,
+            java.math.BigDecimal amount,
+            String reference,
+            UUID journalEntryId,
+            String sourceModule,
+            String sourceType,
+            UUID sourceId,
+            @Nullable UUID actor) {
+        java.time.OffsetDateTime now = java.time.OffsetDateTime.now();
+        return dsl.insertInto(PAYMENTS)
+                .set(PAYMENTS.COMPANY_ID, companyId)
+                .set(PAYMENTS.NUMBER, number)
+                .set(PAYMENTS.DIRECTION, "OUTBOUND")
+                .set(PAYMENTS.PAYMENT_KIND, "OTHER")
+                .set(PAYMENTS.BANK_ACCOUNT_ID, bankAccountId)
+                .set(PAYMENTS.PAYMENT_DATE, paymentDate)
+                .set(PAYMENTS.CURRENCY_CODE, currencyCode)
+                .set(PAYMENTS.AMOUNT, amount)
+                .set(PAYMENTS.EXCHANGE_RATE, java.math.BigDecimal.ONE)
+                .set(PAYMENTS.AMOUNT_BASE, amount)
+                .set(PAYMENTS.METHOD, "BANK_TRANSFER")
+                .set(PAYMENTS.REFERENCE, reference)
+                .set(PAYMENTS.STATUS, "POSTED")
+                .set(PAYMENTS.JOURNAL_ENTRY_ID, journalEntryId)
+                .set(PAYMENTS.SOURCE_MODULE, sourceModule)
+                .set(PAYMENTS.SOURCE_TYPE, sourceType)
+                .set(PAYMENTS.SOURCE_ID, sourceId)
+                .set(PAYMENTS.POSTED_AT, now)
+                .set(PAYMENTS.POSTED_BY, actor)
+                .set(PAYMENTS.CREATED_BY, actor)
+                .set(PAYMENTS.UPDATED_BY, actor)
+                .returning(PAYMENTS.ID)
+                .fetchSingle(PAYMENTS.ID);
+    }
+
     public boolean updateDraft(UUID companyId, UUID id, int version, Values v, UUID actor) {
         return dsl.update(PAYMENTS)
                         .set(PAYMENTS.PARTNER_ID, v.partnerId())

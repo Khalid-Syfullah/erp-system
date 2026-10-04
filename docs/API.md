@@ -475,35 +475,49 @@ Branch-restricted users see quotations, orders, deliveries and returns of their 
 
 | Method & path | Permission |
 |---|---|
-| `GET/POST {c}/employees` (`{employeeNumber, firstName, lastName, preferredName?, workEmail?, hireDate, initialAssignment?}`; responses include `currentAssignment`) · `GET/PATCH …/{id}` [A] (sensitive fields masked; Phase 9) · `POST …/{id}/reveal` (Phase 9; audit-logged; returns sensitive fields) | `hr.employee.read` / `.manage` / `.read_sensitive` |
-| `POST {c}/employees/{id}/{activate|terminate}` [A] `{terminationDate, reason}` | `hr.employee.manage` / `.terminate` |
+| `GET/POST {c}/employees` (`{employeeNumber, firstName, lastName, preferredName?, workEmail?, hireDate, initialAssignment?}`; responses include `currentAssignment`, personal data and `nationalIdMasked` / `dateOfBirthSet`, never the sensitive values or pay) · `GET/PATCH …/{id}` [A] (`personalEmail`, `phone`, `address`; `dateOfBirth` and `nationalId` also need `hr.employee.read_sensitive`) | `hr.employee.read` / `.manage` |
+| `POST {c}/employees/{id}/reveal` (step-up; `VIEW_SENSITIVE` audit; returns `dateOfBirth`, `nationalId`) | `hr.employee.read_sensitive` |
+| `PUT/DELETE {c}/employees/{id}/user` [A] `{userId}` (self-service link; the user must be assigned to the company; once per company) | `hr.employee.manage` |
+| `POST {c}/employees/{id}/{activate|terminate}` [A] `{terminationDate, reason}` (termination cancels later leave, disables the linked user, publishes `hr.employee.terminated`) | `hr.employee.manage` / `.terminate` |
 | `GET {c}/employees/{id}/assignments` · `POST …` (`{branchId, departmentId, positionId?, managerEmployeeId?, employmentType?, fte?, effectiveFrom?, effectiveTo?}`) · `PATCH …/assignments/{aid}` [A] (`positionId`, `managerEmployeeId`, `employmentType`, `fte`, `effectiveTo`) · `DELETE …/assignments/{aid}` [A] (only before it starts) | `hr.employee.read` / `hr.employee.manage` |
 | `GET {c}/employment-assignments?asOf=&filter[departmentId|branchId|positionId|managerEmployeeId|employeeId]=` (the organization on a date) | `hr.employee.read` |
 | `GET/POST {c}/department-heads` (`asOf`, filters) · `GET …/{id}` · `PATCH …/{id}` [A] (`effectiveTo`) | `hr.employee.read` / `hr.employee.manage` |
-| `GET/POST/DELETE {c}/employees/{id}/bank-accounts[/{bid}]` | `hr.employee.manage_bank` |
-| `GET/POST {c}/employees/{id}/documents` | `hr.employee.manage` |
+| `GET/POST {c}/employees/{id}/bank-accounts` (listed masked) · `POST …/{bid}/make-primary` · `POST …/{bid}/reveal` (step-up, audited) · `DELETE …/{bid}` | `hr.employee.manage_bank` |
+| `GET {c}/employees/{id}/documents` · `POST …` (multipart `file`, `documentType`, `title`, `validUntil?`) · `GET …/{did}/content` (audited) · `DELETE …/{did}` | `hr.employee.manage` |
 | `GET/POST {c}/positions` (`{code, title, departmentId?, grade?}`) · `GET/PATCH …/{id}` [A] · `POST …/{deactivate|activate}` [A] | `hr.employee.read` (read) / `hr.position.manage` |
-| `GET/POST {c}/leave-types` · `PATCH …/{id}` [A] | `hr.leave.configure` |
-| `GET/POST {c}/leave-requests` · `POST …/{id}/{submit|approve|reject|cancel}` [A] | `hr.leave.read` / `hr.leave.approve` (or the manager relationship) |
-| `GET {c}/leave-balances?employeeId=` · `POST {c}/leave-ledger/adjustments` [I] | `hr.leave.read` / `hr.leave.adjust` |
-| `GET/POST {c}/public-holidays` | `hr.leave.configure` |
-| Self-service: `GET {c}/me/employee` · `GET/POST {c}/me/leave-requests` · `GET {c}/me/leave-balances` · `GET {c}/me/payslips` · `GET {c}/me/payslips/{id}/pdf` | authenticated, linked employee |
+| `GET/POST {c}/leave-types` · `GET/PATCH …/{id}` [A] (`annualEntitlementDays`, `accrualMethod` ANNUAL/MONTHLY, `maxCarryForwardDays`, `allowNegativeBalance`, `isPaid`, `isActive`) | `hr.leave.read` / `hr.leave.configure` |
+| `GET {c}/leave-requests` · `GET …/{id}` | `hr.leave.read` |
+| `POST {c}/leave-requests` (`{employeeId, leaveTypeId, startDate, endDate, halfDay?, reason?}`, a draft) · `PUT/DELETE …/{id}` [A] (drafts) · `POST …/{id}/{submit|approve|reject|cancel}` [A] `{note?}` | `hr.leave.approve` |
+| `GET {c}/leave-balances?employeeId=&year=` · `GET {c}/leave-ledger?filter[employeeId]=…` | `hr.leave.read` |
+| `POST {c}/leave-ledger/adjustments` [I] `{employeeId, leaveTypeId, year, days, note}` · `POST {c}/leave-accruals` `{asOf}` (idempotent; the daily job does the same) | `hr.leave.adjust` |
+| `GET/POST {c}/public-holidays` (`{branchId?, date, name}`) · `PATCH/DELETE …/{id}` | `hr.leave.read` / `hr.leave.configure` |
+| `GET/PUT {c}/settings/hr` [A] (`weekendDays` as ISO days, `standardWorkMinutes`) | `hr.leave.configure` |
+| `GET {c}/attendance?filter[employeeId|workDate|status]=` · `GET {c}/attendance/summary?from=&to=` (ADR-039) | `hr.attendance.read` |
+| `PUT/DELETE {c}/employees/{id}/attendance/{date}` `{status, checkIn?, checkOut?, note?}` | `hr.attendance.manage` |
+| `GET {c}/hr-reports/headcount?asOf=` (by branch and department, in the branch scope) | `hr.employee.read` |
+| Self-service (the employee linked to the caller; `404 NOT_AN_EMPLOYEE` otherwise): `GET/PATCH {c}/me/employee` (preferred name and contact data) · `GET/POST {c}/me/leave-requests` · `PUT/DELETE …/{id}` · `POST …/{id}/{submit|cancel}` · `GET {c}/me/leave-balances?year=` · `GET {c}/me/leave-ledger` · `GET {c}/me/attendance` · `POST {c}/me/attendance/{clock-in|clock-out}` | authenticated, linked employee |
+| Managers (direct and indirect reports, HR-3): `GET {c}/me/team` (basic data only) · `GET {c}/me/team/leave-requests` · `POST {c}/me/team/leave-requests/{id}/{approve|reject}` [A] | authenticated, reporting line |
 
 ### 17.10 Payroll
 
 | Method & path | Permission |
 |---|---|
-| `GET/POST {c}/pay-components` · `PATCH …/{id}` [A] | `payroll.configuration.manage` |
-| `GET/POST {c}/salary-structures` (+ components) · `PATCH …/{id}` [A] | `payroll.configuration.manage` |
-| `GET/POST {c}/pay-schedules` · `GET/POST {c}/payroll-periods` | `payroll.configuration.manage` |
-| `GET/POST {c}/employees/{id}/compensations` · `PATCH …/{cid}` [A] | `payroll.compensation.read` / `.manage` |
-| `GET/POST/PATCH/DELETE {c}/payroll-periods/{id}/inputs[/{inputId}]` | `payroll.run.prepare` |
-| `GET/POST {c}/payroll-runs` · `GET …/{id}` | `payroll.run.read` / `payroll.run.prepare` |
-| `POST {c}/payroll-runs/{id}/calculate` [A] → 202 job | `payroll.run.prepare` |
+| `GET/PUT {c}/settings/payroll` [A] (`prorationBasis` CALENDAR_DAYS/WORKING_DAYS) · `GET {c}/statutory-rules` | `payroll.configuration.manage` |
+| `GET/POST {c}/pay-components` · `GET/PATCH …/{id}` [A] (`kind`, `calculation`, `defaultRate`, `defaultAmount`, `isTaxable`, `statutoryRuleCode`, `sequence`) | `payroll.configuration.manage` |
+| `GET/POST {c}/salary-structures` (with `components[{componentId, rate?, amount?}]`) · `GET …/{id}` · `PUT …/{id}` [A] | `payroll.configuration.manage` |
+| `GET/POST {c}/pay-schedules` (base currency, ADR-039) · `PATCH …/{id}` [A] · `POST …/{id}/periods` `{year}` (creates the missing periods) | `payroll.configuration.manage` |
+| `GET {c}/payroll-periods` · `GET …/{id}` | `payroll.run.read` |
+| `GET {c}/employees/{id}/compensations` · `POST …` (`{payScheduleId, salaryStructureId, baseAmount, effectiveFrom, effectiveTo?, overrides[]}`; ends the open-ended one before it) · `PATCH …/{cid}` [A] (`effectiveTo`) · `DELETE …/{cid}` [A] (not started yet) | `payroll.compensation.read` / `.manage` |
+| `GET/POST {c}/payroll-periods/{id}/inputs` (`{employeeId, componentId, runId?, quantity | amount, note?}`) · `PUT/DELETE …/inputs/{inputId}` | `payroll.run.prepare` |
+| `GET/POST {c}/payroll-runs` (`{payrollPeriodId, runType REGULAR/OFF_CYCLE, description?, accountingDate?}`) · `GET …/{id}` (with issues) | `payroll.run.read` / `payroll.run.prepare` |
+| `POST {c}/payroll-runs/{id}/calculate` [A] → 202 (CALCULATING until the job has run) · `POST …/{id}/cancel` [A] | `payroll.run.prepare` |
 | `POST {c}/payroll-runs/{id}/{approve|unapprove}` [A][I] | `payroll.run.approve` (SoD) |
-| `POST {c}/payroll-runs/{id}/post` [A][I] · `POST …/{id}/mark-paid` [A][I] `{bankAccountId, paymentDate}` · `POST …/{id}/cancel` [A] | `payroll.run.post` / `payroll.run.pay` |
-| `GET {c}/payroll-runs/{id}/payslips` · `GET {c}/payslips/{id}` · `GET {c}/payslips/{id}/pdf` | `payroll.payslip.read` |
-| `GET {c}/payroll-runs/{id}/bank-file` | `payroll.run.pay` (audit-logged) |
+| `POST {c}/payroll-runs/{id}/post` [A][I] · `POST …/{id}/mark-paid` [A][I] `{bankAccountId, paymentDate}` | `payroll.run.post` / `payroll.run.pay` |
+| `GET {c}/payroll-runs/{id}/payslips` · `GET {c}/payslips/{id}` · `GET {c}/payslips/{id}/pdf` (posted runs; audited) | `payroll.payslip.read` |
+| `GET {c}/payroll-runs/{id}/bank-file` (CSV; audit-logged) | `payroll.run.pay` |
+| `GET {c}/payroll-runs/{id}/summary` · `GET {c}/payroll-reports/component-totals?from=&to=` | `payroll.report.read` |
+| `GET {c}/payroll-runs/{id}/register` (pay per employee) | `payroll.report.read` + `payroll.payslip.read` |
+| Self-service: `GET {c}/me/payslips` · `GET {c}/me/payslips/{id}` · `GET {c}/me/payslips/{id}/pdf` (own, posted runs only) | authenticated, linked employee |
 
 ### 17.11 Reporting
 

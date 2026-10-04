@@ -80,6 +80,17 @@ public class PositionRepository {
                 .map(PositionRepository::toView);
     }
 
+    public java.util.Map<UUID, String> titles(UUID companyId, java.util.Collection<UUID> ids) {
+        if (ids.isEmpty()) {
+            return java.util.Map.of();
+        }
+        return dsl.select(POSITIONS.ID, POSITIONS.TITLE)
+                .from(POSITIONS)
+                .where(POSITIONS.COMPANY_ID.eq(companyId))
+                .and(POSITIONS.ID.in(ids))
+                .fetchMap(POSITIONS.ID, POSITIONS.TITLE);
+    }
+
     public PageResponse<PositionView> list(UUID companyId, ListQuery query) {
         return paginator.fetch(
                 dsl, POSITIONS, POSITIONS.COMPANY_ID.eq(companyId), query, BINDING, PositionRepository::toView);

@@ -280,7 +280,7 @@ flowchart BT
   accounting -. api + events .-> inventory
   accounting -. events + ports .-> procurement
   accounting -. events + ports .-> sales
-  accounting -. events .-> payroll
+  accounting -. api + events .-> payroll
   reporting -. views + facades .-> accounting
   reporting -. views .-> sales
   reporting -. views .-> procurement
@@ -301,11 +301,11 @@ Allowed dependencies in table form. This table is the source of truth for `allow
 | auth | org |
 | partners | org |
 | inventory | org |
-| hr | org, auth |
+| hr | org, auth (`auth::api`: link and deactivate users, ADR-039) |
 | procurement | org, partners, inventory |
 | sales | org, partners, inventory |
-| payroll | org, hr |
-| accounting | org (incl. `org::events`), partners, inventory::{api, events}, procurement::{api, events}, sales::{api, events}, payroll::events (`procurement`/`sales` `api` is used only to **implement ports** defined by those modules; `inventory::api` for category ancestry, reason codes and the valuation total, ADR-038) |
+| payroll | org, hr (`hr::api`, `hr::events`) |
+| accounting | org (incl. `org::events`), partners, inventory::{api, events}, procurement::{api, events}, sales::{api, events}, payroll::{api, events} (`procurement`/`sales` `api` is used only to **implement ports** defined by those modules; `inventory::api` for category ancestry, reason codes and the valuation total, ADR-038; `payroll::api` to validate pay-component mapping scopes, ADR-039) |
 | reporting | org, accounting::api, plus reporting views of all modules |
 | admin | org, auth |
 
@@ -479,7 +479,8 @@ A failure raises an alert and an audit entry. These jobs are how silent drift wo
 - Metadata lives in `platform.files` (owner module, entity type and ID, content type, size, sha256, uploaded_by).
 - Downloads are authorized through the owning entity's permission and served with short-lived pre-signed URLs (5 min) or streamed.
 - The upload limit is 25 MB by default. The content type is checked against an allowlist (PDF, PNG, JPEG, XLSX, CSV, DOCX). An antivirus hook (ClamAV) is optional and configurable.
-- Generated PDFs (invoices, POs, payslips) are rendered asynchronously, using an HTML template and OpenPDF/Flying Saucer, and stored as files.
+- Generated PDFs are rendered asynchronously and stored as files. Payslip PDFs (Phase 9) are built with OpenPDF directly (ADR-039); invoice and PO PDFs follow with the document pipeline.
+- The `FileStorage` port has one S3 adapter (AWS SDK v2). Local development runs SeaweedFS's S3 gateway (Docker Compose), the tests Adobe S3Mock (MinIO images are no longer published, ADR-039). Objects are written before the business transaction and deleted again if it fails; reads fetch metadata in a short transaction and content outside it.
 
 ---
 
@@ -509,11 +510,11 @@ The "Sync consumers" column lists consumers that run in the publisher's transact
 | `sales.credit_note.posted` | Sales | The same record (`InvoicePosted`, `metadata.eventType` tells which), with originalInvoiceId and, for returned goods, salesReturnId; amounts positive | Accounting | PDF render (later) |
 | `sales.order.confirmed` / `sales.order.cancelled` (v1) | Sales | salesOrderId, number, customerId, currency, total; confirmed: totalBase (confirmation rate), creditCheckResult; cancelled: reason | — | Notifications, reporting (later) |
 | `procurement.purchase_order.approved` (v1) | Procurement | poId, number, supplierId, currency, subtotal, taxTotal, total | — | Email PO to supplier (if configured; later) |
-| `payroll.run.posted` | Payroll | runId, periodId, accountingDate, currency, lines aggregated by (payComponentId, departmentId, branchId, kind: EARNING/DEDUCTION/EMPLOYER_CONTRIBUTION), netPayTotal, liabilities[{componentId, amount}] | Accounting | Payslip PDF generation, email to employees |
-| `payroll.run.paid` | Payroll | runId, bankAccountId, paymentDate, amount | Accounting (Dr Salaries payable / Cr Bank) | — |
+| `payroll.run.posted` (v1, synchronous in the posting transaction; `PayrollRunPosted`) | Payroll | runId, number, periodId, runType, accountingDate, currency (base), lines aggregated by (componentId, componentCode, kind: EARNING/DEDUCTION/EMPLOYER_CONTRIBUTION, departmentId, branchId), gross, deduction and employer contribution totals, netPayTotal | Accounting (payroll entry) | Payslip PDFs are rendered by the `payroll-payslip-pdfs` task (ADR-039); e-mail later |
+| `payroll.run.paid` (v1, synchronous; `PayrollRunPaid`) | Payroll | runId, number, bankAccountId, paymentDate, currency, amount | Accounting (Dr Salaries payable / Cr Bank, payment of kind OTHER) | — |
 | `accounting.period.closed` / `reopened` | Accounting | periodId, fiscalYearId, start, end | — | Reporting, Admin notifications |
 | `accounting.payment.posted` | Accounting | paymentId, direction, partnerId, amount, allocations[{openItemId, sourceRef, amount}] | — | Notifications, reporting projections |
-| `hr.employee.hired` / `terminated` | HR | employeeId, companyId, departmentId, branchId, effectiveDate | — | Payroll (flag compensation setup / final pay; idempotent) |
+| `hr.employee.hired` / `terminated` (v1, synchronous; `EmployeeHired`, `EmployeeTerminated`) | HR | employeeId, employeeNumber, hireDate / terminationDate, branchId? and departmentId? (hired), reason? (terminated) | Payroll on `terminated`: ends the compensation at the termination date (ADR-039) | — |
 
 Deactivating a terminated employee's user account is **not** done by Auth listening to HR, because that would make Auth depend on HR and create a cycle. Instead, HR calls `AuthFacade.deactivateUser(userId)` synchronously in the termination transaction; HR→Auth is allowed.
 

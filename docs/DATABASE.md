@@ -1121,6 +1121,14 @@ accounting.period_balances (company_id, period_id → periods, account_id → ac
   -- Phase 8 reports are computed live from posted lines (ADR-038); the snapshots record what each close saw.
 ```
 
+### 5.8a `platform.files` (Phase 9, ADR-039)
+
+```sql
+platform.files (id, company_id C, owner_module, entity_type, entity_id, file_name, content_type, size_bytes,
+  sha256 char(64), storage_key text UNIQUE CHECK (LIKE 'company/<company_id>/%'), created_at, created_by)
+  -- metadata only; the content is in S3-compatible storage under storage_key
+```
+
 ### 5.9 `hr`
 
 ```mermaid
@@ -1142,10 +1150,10 @@ erDiagram
 -- (uq_employees__company_id_work_email); employment_type NOT NULL DEFAULT 'FULL_TIME';
 -- CHECK (manager_employee_id <> employee_id); employee_number ~ '^[A-Z0-9_-]{1,30}$'.
 hr.employees (id, company_id C, employee_number text NOT NULL,
-  user_id uuid NULL UNIQUE → auth.users,
+  user_id uuid NULL → auth.users, UNIQUE (company_id, user_id),   -- per company: one person may work for two companies (ADR-039)
   first_name, last_name text NOT NULL, preferred_name text NULL,
   work_email citext NULL, personal_email citext NULL, phone text NULL,
-  date_of_birth_encrypted bytea NULL, national_id_encrypted bytea NULL, national_id_last4 char(4) NULL, key_version smallint NULL,
+  date_of_birth_encrypted bytea NULL, national_id_encrypted bytea NULL, national_id_last4 text NULL, key_version smallint NULL,
   address jsonb NULL,
   hire_date date NOT NULL, termination_date date NULL, termination_reason text NULL,
   status text NOT NULL CHECK (IN ('ONBOARDING','ACTIVE','ON_LEAVE','TERMINATED')),
@@ -1154,7 +1162,7 @@ hr.employees (id, company_id C, employee_number text NOT NULL,
   CHECK ((status = 'TERMINATED') = (termination_date IS NOT NULL)))
 
 hr.employee_bank_accounts (id, company_id, employee_id, bank_name, account_holder,
-  account_number_encrypted bytea NOT NULL, iban_encrypted bytea NULL, swift_bic NULL, last4 char(4), key_version smallint,
+  account_number_encrypted bytea NOT NULL, iban_encrypted bytea NULL, swift_bic NULL, last4 text, key_version smallint,
   is_primary boolean, + std)   -- partial unique (employee_id) WHERE is_primary
 
 hr.positions (id, company_id C, code, title, department_id NULL → org.departments, grade text NULL, is_active, + std,
@@ -1172,67 +1180,91 @@ hr.employment_assignments (id, company_id C, employee_id → employees,
 hr.department_heads (id, company_id, department_id → org.departments, employee_id → employees, effective_from, effective_to, + std,
   EXCLUDE USING gist (department_id WITH =, daterange(effective_from, effective_to, '[]') WITH &&))
 
-hr.leave_types (id, company_id C, code, name, is_paid boolean, annual_entitlement_days numeric(6,2), max_carry_forward_days numeric(6,2), is_active, + std)
-hr.leave_ledger (id, company_id, employee_id, leave_type_id, leave_year smallint,
+-- Phase 9 (ADR-039)
+hr.settings (company_id PK, weekend_days smallint[] NOT NULL DEFAULT '{6,7}' (ISO days), standard_work_minutes integer, + std)
+
+hr.leave_types (id, company_id C, code, name, is_paid boolean, annual_entitlement_days numeric(6,2),
+  accrual_method text CHECK (IN ('ANNUAL','MONTHLY')), max_carry_forward_days numeric(6,2),
+  allow_negative_balance boolean, is_active, + std, UNIQUE (company_id, code))
+hr.leave_ledger (id, company_id, employee_id, leave_type_id, leave_year smallint, accrual_month smallint NULL,
   entry_type text CHECK (IN ('ACCRUAL','TAKEN','ADJUSTMENT','CARRY_FORWARD','EXPIRY')),
-  days numeric(6,2) NOT NULL CHECK (days <> 0), leave_request_id NULL, note text, created_at, created_by)   -- append-only
+  days numeric(6,2) NOT NULL CHECK (days <> 0), leave_request_id NULL, note text, created_at, created_by)
+  -- append-only (trigger, ck_leave_ledger__immutable); signs: ACCRUAL/CARRY_FORWARD > 0, EXPIRY < 0;
+  -- unique: one annual accrual, one monthly accrual per month, one carry-forward and one expiry per employee, type and year
 hr.leave_requests (id, company_id C, employee_id, leave_type_id, start_date, end_date,
-  days numeric(6,2) NOT NULL CHECK (days > 0),
+  days numeric(6,2) NOT NULL CHECK (days > 0), reason,
   status CHECK (IN ('DRAFT','SUBMITTED','APPROVED','REJECTED','CANCELLED')),
-  approver_employee_id NULL, decided_at, decision_note, + std, CHECK (end_date >= start_date))
+  submitted_at, decided_by, decided_at, decision_note, + std,
+  CHECK (end_date >= start_date), CHECK (same calendar year),
+  EXCLUDE USING gist (employee_id WITH =, daterange(start_date, end_date, '[]') WITH &&) WHERE (status IN ('SUBMITTED','APPROVED')))
 hr.public_holidays (id, company_id, branch_id NULL, holiday_date date, name, + std, UNIQUE NULLS NOT DISTINCT (company_id, branch_id, holiday_date))
-hr.employee_documents (id, company_id, employee_id, document_type, file_id → platform.files, valid_until date NULL, + std)
+hr.employee_documents (id, company_id, employee_id, document_type CHECK (IN ('CONTRACT','IDENTITY','CERTIFICATE','WORK_PERMIT','REVIEW','OTHER')),
+  title, file_id → platform.files UNIQUE, file_name, content_type, size_bytes (copied from the file), valid_until date NULL, + std)
+hr.attendance_records (id, company_id, employee_id, work_date, status CHECK (IN ('PRESENT','ABSENT','HALF_DAY','REMOTE','ON_LEAVE','HOLIDAY')),
+  check_in timestamptz NULL, check_out timestamptz NULL, worked_minutes integer NULL, source CHECK (IN ('MANUAL','SELF')), note, + std,
+  UNIQUE (company_id, employee_id, work_date), CHECK (check_out IS NULL OR check_out >= check_in))
 ```
 
 ### 5.10 `payroll`
 
 ```sql
+-- Phase 9 (ADR-039). Rates are percentages, except for INPUT components (amount per unit of quantity).
+payroll.settings (company_id PK, proration_basis CHECK (IN ('CALENDAR_DAYS','WORKING_DAYS')), + std)
+
 payroll.pay_components (id, company_id C, code, name,
   kind text NOT NULL CHECK (IN ('EARNING','DEDUCTION','EMPLOYER_CONTRIBUTION')),
   calculation text NOT NULL CHECK (IN ('FIXED','PERCENT_OF_BASE','PERCENT_OF_GROSS','INPUT','STATUTORY')),
-  default_rate numeric(9,6) NULL, default_amount numeric(19,4) NULL,
-  is_taxable boolean NOT NULL DEFAULT true, statutory_rule_code text NULL,    -- binds to a pluggable StatutoryRule implementation
+  default_rate numeric(19,6) NULL, default_amount numeric(19,4) NULL,
+  is_taxable boolean NOT NULL DEFAULT true, statutory_rule_code text NULL,    -- binds to a StatutoryRule bean
   sequence integer NOT NULL, is_active, + std, UNIQUE (company_id, code),
-  CHECK (calculation <> 'STATUTORY' OR statutory_rule_code IS NOT NULL))
+  CHECK ((calculation = 'STATUTORY') = (statutory_rule_code IS NOT NULL)),
+  CHECK (kind <> 'EARNING' OR calculation IN ('FIXED','PERCENT_OF_BASE','INPUT')))
 
 payroll.salary_structures (id, company_id C, code, name, is_active, + std)
-payroll.salary_structure_components (structure_id, component_id, company_id, rate numeric(9,6) NULL, amount numeric(19,4) NULL,
+payroll.salary_structure_components (structure_id, component_id, company_id, rate numeric(19,6) NULL, amount numeric(19,4) NULL,
   PRIMARY KEY (structure_id, component_id))
 
 payroll.pay_schedules (id, company_id C, code, name, frequency CHECK (IN ('MONTHLY','SEMI_MONTHLY','BIWEEKLY','WEEKLY')),
-  currency_code char(3) NOT NULL, is_active, + std)
+  currency_code char(3) NOT NULL (the base currency), anchor_date NULL (WEEKLY/BIWEEKLY), pay_day_offset smallint, is_active, + std)
 
 payroll.employee_compensations (id, company_id C, employee_id → hr.employees, pay_schedule_id, salary_structure_id,
-  base_amount numeric(19,4) NOT NULL CHECK (base_amount >= 0), currency_code,
-  effective_from date NOT NULL, effective_to date NULL, + std,
+  base_amount numeric(19,4) NOT NULL CHECK (base_amount >= 0),   -- the pay of one full period of the schedule
+  currency_code, effective_from date NOT NULL, effective_to date NULL, + std,
   EXCLUDE USING gist (employee_id WITH =, daterange(effective_from, effective_to, '[]') WITH &&))
-payroll.employee_component_overrides (id, company_id, employee_compensation_id, component_id, rate NULL, amount NULL, + std,
+payroll.employee_component_overrides (id, company_id, employee_compensation_id, component_id, rate NULL, amount NULL,
   UNIQUE (employee_compensation_id, component_id))
 
 payroll.payroll_periods (id, company_id C, pay_schedule_id, start_date, end_date, pay_date,
-  status CHECK (IN ('OPEN','PROCESSED','CLOSED')), + std,
+  status CHECK (IN ('OPEN','PROCESSED','CLOSED')), + std, UNIQUE (pay_schedule_id, start_date),
   EXCLUDE USING gist (pay_schedule_id WITH =, daterange(start_date, end_date, '[]') WITH &&))
 
-payroll.payroll_inputs (id, company_id, payroll_period_id, employee_id, component_id, quantity numeric(18,6) NULL, amount numeric(19,4) NULL, note, + std)
+payroll.payroll_inputs (id, company_id, payroll_period_id, payroll_run_id NULL (off-cycle run; NULL = the regular run),
+  employee_id, component_id, quantity numeric(18,6) NULL, amount numeric(19,4) NULL, note, + std,
+  CHECK (exactly one of quantity, amount; both > 0))
 
 payroll.payroll_runs (id, company_id C, number NULL, payroll_period_id, run_type CHECK (IN ('REGULAR','OFF_CYCLE','FINAL_SETTLEMENT')),
-  status text NOT NULL CHECK (IN ('DRAFT','CALCULATING','CALCULATED','APPROVED','POSTED','PAID','CANCELLED')),
-  accounting_date date NOT NULL, currency_code char(3) NOT NULL,
+  description, status text NOT NULL CHECK (IN ('DRAFT','CALCULATING','CALCULATED','APPROVED','POSTED','PAID','CANCELLED')),
+  accounting_date date NOT NULL, currency_code char(3) NOT NULL, employee_count,
   gross_total, deduction_total, employer_contribution_total, net_total numeric(19,4) NOT NULL DEFAULT 0,
-  calculated_at, approved_by, approved_at, posted_at, posted_by,
-  paid_at, payment_bank_account_id uuid NULL,     -- accounting.bank_accounts.id (no FK: downstream module)
-  + std,
+  calculation_requested_by, calculated_at, calculated_by, approved_by, approved_at, posted_at, posted_by,
+  paid_at, paid_by, payment_date, payment_bank_account_id uuid NULL,     -- accounting.bank_accounts.id (no FK: downstream module)
+  cancelled_at, + std,
   CHECK (net_total = gross_total - deduction_total))
   -- partial unique (payroll_period_id) WHERE run_type = 'REGULAR' AND status <> 'CANCELLED'
+  -- trigger payroll.guard_run: from APPROVED on only the lifecycle columns change (ck_payroll_runs__frozen)
+payroll.payroll_run_issues (id, company_id, payroll_run_id ON DELETE CASCADE, employee_id NULL, code, message)  -- NEGATIVE_NET, NO_ASSIGNMENT, …
 
 payroll.payslips (id, company_id C, payroll_run_id, employee_id → hr.employees,
-  branch_id, department_id, position_title text,       -- snapshot at calculation
+  employee_number, employee_name, branch_id, department_id, position_title text,       -- snapshot at calculation
+  days_paid, days_in_period, base_amount, taxable_gross,
   gross_amount, deduction_amount, employer_contribution_amount, net_amount numeric(19,4),
   currency_code, file_id NULL → platform.files, + std,
   UNIQUE (payroll_run_id, employee_id), CHECK (net_amount = gross_amount - deduction_amount), CHECK (net_amount >= 0))
-payroll.payslip_lines (id, company_id, payslip_id ON DELETE CASCADE (while run not APPROVED), component_id,
-  kind text, quantity numeric(18,6) NULL, rate numeric(19,6) NULL, amount numeric(19,4) NOT NULL CHECK (amount >= 0),
-  sequence integer, + std)
+payroll.payslip_lines (id, company_id, payslip_id ON DELETE CASCADE, component_id, component_code, component_name,
+  kind text, is_taxable, quantity numeric(18,6) NULL, rate numeric(19,6) NULL, amount numeric(19,4) NOT NULL CHECK (amount >= 0),
+  sequence integer, UNIQUE (payslip_id, component_id))
+  -- trigger payroll.guard_payslip: payslips and lines change only while the run is DRAFT/CALCULATING/CALCULATED;
+  -- a posted payslip only gains its PDF (file_id NULL → value)
 ```
 
 ### 5.11 `reporting` and `admin`

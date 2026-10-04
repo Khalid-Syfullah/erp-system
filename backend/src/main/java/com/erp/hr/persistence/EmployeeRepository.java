@@ -4,6 +4,7 @@ import static com.erp.db.hr.Tables.EMPLOYEES;
 import static com.erp.db.hr.Tables.EMPLOYMENT_ASSIGNMENTS;
 
 import com.erp.db.hr.tables.records.EmployeesRecord;
+import com.erp.hr.application.Address;
 import com.erp.hr.application.EmployeeView;
 import com.erp.hr.application.HrCommands;
 import com.erp.hr.application.HrListings;
@@ -20,9 +21,11 @@ import java.util.Set;
 import java.util.UUID;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
+import org.jooq.JSONB;
 import org.jooq.impl.DSL;
 import org.jspecify.annotations.Nullable;
 import org.springframework.stereotype.Repository;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Employees. With a restricted branch scope, an employee is visible only when their assignment
@@ -147,7 +150,8 @@ public class EmployeeRepository {
                 == 1;
     }
 
-    private static Condition visible(@Nullable Set<UUID> branchScope, LocalDate today) {
+    /** Whether the employee row is within the branch scope (for queries joining employees). */
+    public static Condition visible(@Nullable Set<UUID> branchScope, LocalDate today) {
         if (branchScope == null) {
             return DSL.noCondition();
         }
@@ -158,6 +162,154 @@ public class EmployeeRepository {
                 .and(EMPLOYMENT_ASSIGNMENTS.BRANCH_ID.in(branchScope))
                 .and(EMPLOYMENT_ASSIGNMENTS.EFFECTIVE_FROM.le(today))
                 .and(EMPLOYMENT_ASSIGNMENTS.EFFECTIVE_TO.isNull().or(EMPLOYMENT_ASSIGNMENTS.EFFECTIVE_TO.ge(today))));
+    }
+
+    /** The encrypted values of an employee (decrypted only by the reveal service). */
+    public record Sensitive(byte @Nullable [] dateOfBirth, byte @Nullable [] nationalId) {}
+
+    /** Profile, personal and (already encrypted) sensitive values in one optimistic update. */
+    public boolean update(
+            UUID companyId,
+            UUID id,
+            int expectedVersion,
+            UUID actor,
+            HrCommands.Employee c,
+            @Nullable String personalEmail,
+            @Nullable String phone,
+            @Nullable Address address,
+            byte @Nullable [] dateOfBirth,
+            byte @Nullable [] nationalId,
+            @Nullable String nationalIdLast4,
+            @Nullable Integer keyVersion) {
+        return dsl.update(EMPLOYEES)
+                        .set(EMPLOYEES.FIRST_NAME, c.firstName())
+                        .set(EMPLOYEES.LAST_NAME, c.lastName())
+                        .set(EMPLOYEES.PREFERRED_NAME, c.preferredName())
+                        .set(EMPLOYEES.WORK_EMAIL, c.workEmail())
+                        .set(EMPLOYEES.HIRE_DATE, c.hireDate())
+                        .set(EMPLOYEES.PERSONAL_EMAIL, personalEmail)
+                        .set(EMPLOYEES.PHONE, phone)
+                        .set(
+                                EMPLOYEES.ADDRESS,
+                                address == null ? null : JSONB.valueOf(JSON.writeValueAsString(address)))
+                        .set(EMPLOYEES.DATE_OF_BIRTH_ENCRYPTED, dateOfBirth)
+                        .set(EMPLOYEES.NATIONAL_ID_ENCRYPTED, nationalId)
+                        .set(EMPLOYEES.NATIONAL_ID_LAST4, nationalIdLast4)
+                        .set(EMPLOYEES.KEY_VERSION, keyVersion == null ? null : keyVersion.shortValue())
+                        .set(EMPLOYEES.UPDATED_AT, OffsetDateTime.now())
+                        .set(EMPLOYEES.UPDATED_BY, actor)
+                        .set(EMPLOYEES.VERSION, expectedVersion + 1)
+                        .where(EMPLOYEES.COMPANY_ID.eq(companyId))
+                        .and(EMPLOYEES.ID.eq(id))
+                        .and(EMPLOYEES.VERSION.eq(expectedVersion))
+                        .execute()
+                == 1;
+    }
+
+    public boolean updatePersonal(
+            UUID companyId,
+            UUID id,
+            int expectedVersion,
+            UUID actor,
+            @Nullable String personalEmail,
+            @Nullable String phone,
+            @Nullable Address address) {
+        return dsl.update(EMPLOYEES)
+                        .set(EMPLOYEES.PERSONAL_EMAIL, personalEmail)
+                        .set(EMPLOYEES.PHONE, phone)
+                        .set(
+                                EMPLOYEES.ADDRESS,
+                                address == null ? null : JSONB.valueOf(JSON.writeValueAsString(address)))
+                        .set(EMPLOYEES.UPDATED_AT, OffsetDateTime.now())
+                        .set(EMPLOYEES.UPDATED_BY, actor)
+                        .set(EMPLOYEES.VERSION, expectedVersion + 1)
+                        .where(EMPLOYEES.COMPANY_ID.eq(companyId))
+                        .and(EMPLOYEES.ID.eq(id))
+                        .and(EMPLOYEES.VERSION.eq(expectedVersion))
+                        .execute()
+                == 1;
+    }
+
+    public boolean updateSensitive(
+            UUID companyId,
+            UUID id,
+            int expectedVersion,
+            UUID actor,
+            byte @Nullable [] dateOfBirth,
+            byte @Nullable [] nationalId,
+            @Nullable String nationalIdLast4,
+            @Nullable Integer keyVersion) {
+        return dsl.update(EMPLOYEES)
+                        .set(EMPLOYEES.DATE_OF_BIRTH_ENCRYPTED, dateOfBirth)
+                        .set(EMPLOYEES.NATIONAL_ID_ENCRYPTED, nationalId)
+                        .set(EMPLOYEES.NATIONAL_ID_LAST4, nationalIdLast4)
+                        .set(EMPLOYEES.KEY_VERSION, keyVersion == null ? null : keyVersion.shortValue())
+                        .set(EMPLOYEES.UPDATED_AT, OffsetDateTime.now())
+                        .set(EMPLOYEES.UPDATED_BY, actor)
+                        .set(EMPLOYEES.VERSION, expectedVersion + 1)
+                        .where(EMPLOYEES.COMPANY_ID.eq(companyId))
+                        .and(EMPLOYEES.ID.eq(id))
+                        .and(EMPLOYEES.VERSION.eq(expectedVersion))
+                        .execute()
+                == 1;
+    }
+
+    public @Nullable Integer keyVersion(UUID companyId, UUID id) {
+        Short version = dsl.select(EMPLOYEES.KEY_VERSION)
+                .from(EMPLOYEES)
+                .where(EMPLOYEES.COMPANY_ID.eq(companyId))
+                .and(EMPLOYEES.ID.eq(id))
+                .fetchSingle(EMPLOYEES.KEY_VERSION);
+        return version == null ? null : version.intValue();
+    }
+
+    public Sensitive sensitive(UUID companyId, UUID id) {
+        return dsl.select(EMPLOYEES.DATE_OF_BIRTH_ENCRYPTED, EMPLOYEES.NATIONAL_ID_ENCRYPTED)
+                .from(EMPLOYEES)
+                .where(EMPLOYEES.COMPANY_ID.eq(companyId))
+                .and(EMPLOYEES.ID.eq(id))
+                .fetchSingle(r -> new Sensitive(r.value1(), r.value2()));
+    }
+
+    public boolean linkUser(UUID companyId, UUID id, int expectedVersion, UUID actor, @Nullable UUID userId) {
+        return dsl.update(EMPLOYEES)
+                        .set(EMPLOYEES.USER_ID, userId)
+                        .set(EMPLOYEES.UPDATED_AT, OffsetDateTime.now())
+                        .set(EMPLOYEES.UPDATED_BY, actor)
+                        .set(EMPLOYEES.VERSION, expectedVersion + 1)
+                        .where(EMPLOYEES.COMPANY_ID.eq(companyId))
+                        .and(EMPLOYEES.ID.eq(id))
+                        .and(EMPLOYEES.VERSION.eq(expectedVersion))
+                        .execute()
+                == 1;
+    }
+
+    /** The employee linked to the user in the company (self-service). */
+    public Optional<EmployeeView> findByUser(UUID companyId, UUID userId) {
+        return dsl.selectFrom(EMPLOYEES)
+                .where(EMPLOYEES.COMPANY_ID.eq(companyId))
+                .and(EMPLOYEES.USER_ID.eq(userId))
+                .fetchOptional(EmployeeRepository::toView);
+    }
+
+    public List<EmployeeView> findAll(UUID companyId, java.util.Collection<UUID> ids) {
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        return dsl.selectFrom(EMPLOYEES)
+                .where(EMPLOYEES.COMPANY_ID.eq(companyId))
+                .and(EMPLOYEES.ID.in(ids))
+                .fetch(EmployeeRepository::toView);
+    }
+
+    /** Employees not terminated before {@code from} and hired by {@code to}. */
+    public List<EmployeeView> employedBetween(UUID companyId, LocalDate from, LocalDate to) {
+        return dsl.selectFrom(EMPLOYEES)
+                .where(EMPLOYEES.COMPANY_ID.eq(companyId))
+                .and(EMPLOYEES.HIRE_DATE.le(to))
+                .and(EMPLOYEES.TERMINATION_DATE.isNull().or(EMPLOYEES.TERMINATION_DATE.ge(from)))
+                .orderBy(EMPLOYEES.EMPLOYEE_NUMBER)
+                .fetch(EmployeeRepository::toView);
     }
 
     static EmployeeView toView(EmployeesRecord r) {
@@ -175,6 +327,14 @@ public class EmployeeRepository {
                 EmployeeStatus.valueOf(r.getStatus()),
                 r.getCreatedAt(),
                 r.getUpdatedAt(),
-                r.getVersion());
+                r.getVersion(),
+                r.getUserId(),
+                r.getPersonalEmail(),
+                r.getPhone(),
+                r.getAddress() == null ? null : JSON.readValue(r.getAddress().data(), Address.class),
+                r.getNationalIdLast4(),
+                r.getDateOfBirthEncrypted() != null);
     }
+
+    private static final JsonMapper JSON = JsonMapper.builder().build();
 }

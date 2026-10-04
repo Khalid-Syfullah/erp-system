@@ -600,47 +600,60 @@ A phase is done only when **all** of the following hold:
 
 | Item (planned for Phase 8) | Moved to | First consumer |
 |---|---|---|
-| Event Publication Registry, `processed_events` | Phase 9 | The first asynchronous listener (payslip PDF and e-mail) |
+| Event Publication Registry, `processed_events` | Phase 9 → later (ADR-039) | The first asynchronous listener |
 | Document rendering and notification pipeline: invoice, quotation, PO and payslip PDFs, e-mail sending, the bank-detail change notification | Phase 9 | Payslips |
 | S3 file port with MinIO; CSV import framework with partner and opening-stock import | Phase 9 | Payslip PDFs, employee documents, imports |
 | Report file exports (CSV, XLSX, PDF) | Phase 10 | The async export framework |
 | Events `accounting.period.closed` / `reopened`, `accounting.payment.posted` | Phase 10 | Reporting projections and notifications |
 | PAY_COMPONENT-scoped mappings | Phase 9 | Payroll postings |
 | Batch supplier payment proposal (optional) | Later | — |
-| Org guard on changing the fiscal start month once fiscal years exist | Phase 9 | With the Org ↔ Accounting port |
+| Org guard on changing the fiscal start month once fiscal years exist | Later (ADR-039) | With the Org ↔ Accounting port |
 
-### Phase 9 — HR and Payroll
+### Phase 9 — HR and Payroll ✅
 
 **Prerequisites:** Phases 3, 4 and 8.
 
-**Deliverables:**
+**Scope** (ADR-039): the HR and Payroll brief (employee profiles and employment, departments and designations, attendance, leave, holidays, documents, employment status; salary structures and components, compensation, periods, processing, deductions, allowances, payslips, payroll reports) on top of the Phase 4 organizational slice. Basic attendance and file storage with payslip PDFs were added by user decision; e-mail, the event registry and CSV imports stay deferred.
 
-- **HR** (on top of the organizational slice delivered in Phase 4, ADR-033: positions, core employees, effective-dated assignments and department heads):
-  - employees: encrypted sensitive fields (date of birth, national ID), reveal with step-up and audit, personal contact data
-  - user linking (`hr.employees.user_id`)
-  - the `ON_LEAVE` transitions driven by leave
-  - leave types, ledger, requests with manager or HR approval, accrual job, public holidays and working-day calculation
-  - termination flow (deactivating the user through the Auth facade, and an event)
-  - employee documents
-  - self-service endpoints
-- **Payroll:**
-  - components, structures, schedules, periods
-  - compensations (effective-dated) and inputs
-  - the calculation engine (PAY-1 to PAY-3) as an async chunked job
-  - the `StatutoryRule` SPI with a "none" rule and a flat-percentage rule
-  - the run state machine with SoD
-  - payslips with PDF
-  - post and mark-paid events, and the Accounting listeners for `payroll.run.posted` and `payroll.run.paid`
-  - bank file export
-- Reporting views (headcount, payroll summary).
+**Delivered:**
 
-**Exit criteria:**
+1. **Platform files:** `platform.files` metadata, the `FileStorage` port with an S3 adapter, uploads written before the business transaction and removed on failure, size limit, type allowlist and content signatures; SeaweedFS in Docker Compose, S3Mock in tests.
+2. **Employees:** personal data, field-encrypted date of birth and national ID (masked responses, reveal with step-up and `VIEW_SENSITIVE` audit, `read_sensitive` to set them), the self-service user link (`auth::api`), termination that cancels later leave, disables the user and publishes `hr.employee.terminated`; `hr.employee.hired` on creation.
+3. **Bank accounts and documents:** encrypted, masked, primary account, audited reveal; documents uploaded, downloaded (audited) and deleted.
+4. **Leave:** types (ANNUAL/MONTHLY accrual, carry-forward maximum, negative balance), the append-only ledger, idempotent accruals with year close (expiry + carry-forward), requests in working days with public holidays and half days, balance and overlap checks, HR and manager approval with SoD, cancellation, adjustments, balances and history; HR settings (weekend days); the `ON_LEAVE` transitions and the daily `hr-leave-daily` job.
+5. **Attendance:** daily records by HR, self-service clock-in/out, list and summary (new permissions `hr.attendance.read` / `.manage`).
+6. **Self-service and managers:** own record, leave, balances, ledger, attendance and payslips; a manager's team and its leave decisions (HR-3, HR-4); headcount report.
+7. **Payroll configuration:** settings (proration basis), components with the `StatutoryRule` SPI (`NONE`, `FLAT_PERCENT`), structures, schedules (all frequencies) and period generation, effective-dated compensations with overrides, period inputs (regular and off-cycle).
+8. **Payroll engine and runs:** the deterministic `PayrollCalculator` (PAY-1 to PAY-3), asynchronous calculation by the `payroll-calculation` task (one transaction per run, batched inserts), run issues, the run state machine with SoD, posting (`PR-` numbers, period PROCESSED, `payroll.run.posted`), mark paid (`payroll.run.paid`), cancellation, database triggers freezing approved runs and posted payslips.
+9. **Payslips, bank file and reports:** payslip PDFs (OpenPDF, `payroll-payslip-pdfs` task or on first download), staff and self-service access, the CSV bank file (audited, CSV-injection safe), run summary, register and component totals.
+10. **Accounting:** `PayrollPostings` books `payroll.run.posted` and `payroll.run.paid` per the posting matrix (disbursement as a payment of kind OTHER); PAY_COMPONENT mapping scopes validated through `payroll::api`.
+11. **Tests:** 1492 in 109 classes (the test JVM now has a 2 GB heap). New in this phase:
+    - `PayrollFlowIntegrationTest` (a month calculated, approved with SoD, posted with the exact GL entry, PDFs, bank file, paid; proration of hires, terminations and raises; inputs resetting runs; issues blocking approval; off-cycle runs; posting into a closed accounting period rolled back)
+    - `PayrollSecurityIntegrationTest` (no pay for HR roles, own released payslips only, register permissions, approvers not approving their own pay, frozen runs and payslips in the database)
+    - `PayrollVolumeIntegrationTest` (1,000 employees), `PayrollConfigurationIntegrationTest` (component, structure, schedule, compensation and input rules; working-day proration; run issues; pay-component account mappings)
+    - `EmployeeRecordsIntegrationTest`, `LeaveIntegrationTest`, `AttendanceIntegrationTest`
+    - `PayrollCalculatorTest` (fixed cases and 300 seeded random payslips: deterministic, rounded per line, totals = sums), `PayrollDomainTest`, `LeaveAndCalendarTest`
 
-- A payroll for 1,000 employees calculates in under 2 minutes.
-- Proration is correct for mid-period hires and terminations.
-- The GL entries match the posting matrix.
-- Sensitive data is masked and its reveal is audited.
-- Employees can see only their own data.
+    Coverage: hr.application 85%, hr.domain 98%, payroll.application 93%, payroll.domain 96%, payroll.persistence 98%, platform.files 81%.
+
+**Exit criteria (met):**
+
+- A payroll for 1,000 employees calculates in under 2 minutes (about one second, `PayrollVolumeIntegrationTest`).
+- Proration is correct for mid-period hires, terminations and raises (`PayrollFlowIntegrationTest`, `PayrollCalculatorTest`).
+- The GL entries match the posting matrix (`PayrollFlowIntegrationTest`).
+- Sensitive data is masked and its reveal is audited (`EmployeeRecordsIntegrationTest`).
+- Employees can see only their own data (`PayrollSecurityIntegrationTest`, `LeaveIntegrationTest`, `AttendanceIntegrationTest`).
+
+**Moved to later phases** (ADR-039):
+
+| Item (planned for Phase 9 or carried over) | Moved to | First consumer |
+|---|---|---|
+| Event Publication Registry, `processed_events`, asynchronous event listeners | Later | E-mail notifications |
+| E-mail sending (payslips, invoices, quotations, POs), the bank-detail change notification | Later | The notification pipeline |
+| CSV import framework (partners, opening stock, employees) | Later | Data migration |
+| Reporting views (headcount, payroll summary as `v_rpt_*`) | Phase 10 | Reporting |
+| FINAL_SETTLEMENT runs, bank-specific payment files, payroll in foreign currencies | Later | — |
+| Org guard on changing the fiscal start month once fiscal years exist | Later | With the Org ↔ Accounting port |
 
 ### Phase 10 — Reporting and analytics
 

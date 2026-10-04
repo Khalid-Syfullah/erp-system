@@ -9,6 +9,7 @@ import com.erp.accounting.persistence.MappingRepository;
 import com.erp.inventory.api.InventoryFacade;
 import com.erp.org.api.OrgFacade;
 import com.erp.partners.api.PartnersFacade;
+import com.erp.payroll.api.PayrollFacade;
 import com.erp.platform.audit.AuditEvent;
 import com.erp.platform.audit.AuditPort;
 import com.erp.platform.web.ApiException;
@@ -51,6 +52,7 @@ public class AccountMappingService {
     private final InventoryFacade inventory;
     private final PartnersFacade partners;
     private final OrgFacade org;
+    private final PayrollFacade payroll;
     private final AccountingContext context;
     private final AuditPort audit;
 
@@ -62,8 +64,10 @@ public class AccountMappingService {
             InventoryFacade inventory,
             PartnersFacade partners,
             OrgFacade org,
+            PayrollFacade payroll,
             AccountingContext context,
             AuditPort audit) {
+        this.payroll = payroll;
         this.mappings = mappings;
         this.accounts = accounts;
         this.settings = settings;
@@ -206,7 +210,7 @@ public class AccountMappingService {
                         .orElse(false);
             case TAX_CODE -> org.taxCode(companyId, id).isPresent();
             case DEPARTMENT -> org.departmentForUse(companyId, id).isPresent();
-            case PAY_COMPONENT -> false;
+            case PAY_COMPONENT -> payroll.component(id).isPresent();
         };
     }
 }

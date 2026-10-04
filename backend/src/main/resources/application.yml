@@ -59,6 +59,11 @@ spring:
   web:
     locale: en
     locale-resolver: fixed
+  servlet:
+    multipart:
+      # Uploads are checked again by the file service (erp.files.max-size).
+      max-file-size: 25MB
+      max-request-size: 26MB
     resources:
       add-mappings: false
 
@@ -122,6 +127,16 @@ logging:
     org.springframework.web.servlet.PageNotFound: ERROR
 
 erp:
+  # Object storage for documents and generated PDFs (ARCHITECTURE.md §8.6). AWS S3 in production
+  # (credentials from the default chain, SSE-KMS); MinIO locally and in tests.
+  files:
+    bucket: ${ERP_FILES_BUCKET:}
+    region: ${ERP_FILES_REGION:us-east-1}
+    endpoint: ${ERP_FILES_ENDPOINT:}
+    access-key: ${ERP_FILES_ACCESS_KEY:}
+    secret-key: ${ERP_FILES_SECRET_KEY:}
+    path-style: ${ERP_FILES_PATH_STYLE:false}
+    max-size: 25MB
   api:
     cursor-signing-key: ${ERP_API_CURSOR_SIGNING_KEY:}
     max-request-body-size: 1MB

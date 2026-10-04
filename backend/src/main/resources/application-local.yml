@@ -22,6 +22,14 @@ logging:
     level: "%5p [%X{request_id:-}]"
 
 erp:
+  files:
+    # The S3 gateway from infra/compose (SeaweedFS, authentication off locally).
+    bucket: ${ERP_FILES_BUCKET:erp-files}
+    endpoint: ${ERP_FILES_ENDPOINT:http://localhost:8333}
+    access-key: ${ERP_FILES_ACCESS_KEY:local}
+    secret-key: ${ERP_FILES_SECRET_KEY:local}
+    path-style: true
+    create-bucket: true
   security:
     secure-cookies: false
     allowed-origins: ${ERP_SECURITY_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:8080}

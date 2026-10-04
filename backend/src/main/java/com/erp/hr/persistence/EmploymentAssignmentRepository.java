@@ -116,6 +116,39 @@ public class EmploymentAssignmentRepository {
                 .collect(Collectors.toMap(AssignmentView::employeeId, Function.identity()));
     }
 
+    /** Assignments effective on {@code date} whose manager is one of {@code managerIds}. */
+    public List<AssignmentView> reportsOn(UUID companyId, Collection<UUID> managerIds, LocalDate date) {
+        if (managerIds.isEmpty()) {
+            return List.of();
+        }
+        return dsl.selectFrom(EMPLOYMENT_ASSIGNMENTS)
+                .where(EMPLOYMENT_ASSIGNMENTS.COMPANY_ID.eq(companyId))
+                .and(EMPLOYMENT_ASSIGNMENTS.MANAGER_EMPLOYEE_ID.in(managerIds))
+                .and(effectiveOn(date))
+                .fetch(EmploymentAssignmentRepository::toView);
+    }
+
+    /** All assignments effective on {@code date} (headcount). */
+    public List<AssignmentView> allEffectiveOn(UUID companyId, LocalDate date) {
+        return dsl.selectFrom(EMPLOYMENT_ASSIGNMENTS)
+                .where(EMPLOYMENT_ASSIGNMENTS.COMPANY_ID.eq(companyId))
+                .and(effectiveOn(date))
+                .fetch(EmploymentAssignmentRepository::toView);
+    }
+
+    /** Assignments of the employees overlapping the period (payroll). */
+    public List<AssignmentView> overlappingAll(UUID companyId, Collection<UUID> employeeIds, EffectivePeriod period) {
+        if (employeeIds.isEmpty()) {
+            return List.of();
+        }
+        return dsl.selectFrom(EMPLOYMENT_ASSIGNMENTS)
+                .where(EMPLOYMENT_ASSIGNMENTS.COMPANY_ID.eq(companyId))
+                .and(EMPLOYMENT_ASSIGNMENTS.EMPLOYEE_ID.in(employeeIds))
+                .and(overlaps(period))
+                .orderBy(EMPLOYMENT_ASSIGNMENTS.EMPLOYEE_ID, EMPLOYMENT_ASSIGNMENTS.EFFECTIVE_FROM)
+                .fetch(EmploymentAssignmentRepository::toView);
+    }
+
     /** Other assignments of the employee overlapping the period. */
     public List<AssignmentView> overlapping(
             UUID companyId, UUID employeeId, EffectivePeriod period, @Nullable UUID excludeId) {

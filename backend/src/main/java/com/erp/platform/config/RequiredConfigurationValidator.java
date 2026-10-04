@@ -40,7 +40,8 @@ public final class RequiredConfigurationValidator implements BeanFactoryPostProc
             new Requirement("erp.security.allowed-origins", "ERP_SECURITY_ALLOWED_ORIGINS"),
             new Requirement("erp.crypto.field-encryption-keys", "ERP_FIELD_ENCRYPTION_KEYS"),
             new Requirement("erp.auth.public-base-url", "ERP_AUTH_PUBLIC_BASE_URL"),
-            new Requirement("spring.mail.host", "ERP_MAIL_HOST"));
+            new Requirement("spring.mail.host", "ERP_MAIL_HOST"),
+            new Requirement("erp.files.bucket", "ERP_FILES_BUCKET"));
 
     static final List<Requirement> BOOTSTRAP_ADMIN = List.of(
             new Requirement("erp.auth.bootstrap.admin-email", "ERP_BOOTSTRAP_ADMIN_EMAIL"),

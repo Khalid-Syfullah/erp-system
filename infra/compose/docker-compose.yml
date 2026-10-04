@@ -1,7 +1,7 @@
 # Local development infrastructure (ARCHITECTURE.md §8.2).
 #
 #   cp .env.example .env                       # once; set local passwords
-#   docker compose --env-file .env -f infra/compose/docker-compose.yml up -d postgres mailpit
+#   docker compose --env-file .env -f infra/compose/docker-compose.yml up -d postgres mailpit s3
 #   cd backend && ./gradlew bootRun --args='--spring.profiles.active=local'
 #
 # Production-like run of the packaged image (migrate job, then API):
@@ -43,6 +43,17 @@ services:
       - "127.0.0.1:8025:8025"
     restart: unless-stopped
 
+  # S3-compatible object storage for documents and payslip PDFs (SeaweedFS's S3 gateway; ADR-039).
+  # Authentication is off locally; the backend still signs its requests with the .env credentials.
+  s3:
+    image: chrislusf/seaweedfs:4.03
+    command: server -s3 -dir=/data -master.volumeSizeLimitMB=256
+    ports:
+      - "127.0.0.1:8333:8333"
+    volumes:
+      - s3data:/data
+    restart: unless-stopped
+
   migrate:
     profiles: ["app"]
     build:
@@ -77,6 +88,11 @@ services:
       ERP_MAIL_PORT: "1025"
       ERP_MAIL_STARTTLS: "false"
       ERP_JOBS_ENABLED: "true"
+      ERP_FILES_BUCKET: erp-files
+      ERP_FILES_ENDPOINT: http://s3:8333
+      ERP_FILES_PATH_STYLE: "true"
+      ERP_FILES_ACCESS_KEY: ${ERP_FILES_ACCESS_KEY:-local}
+      ERP_FILES_SECRET_KEY: ${ERP_FILES_SECRET_KEY:-local}
     ports:
       - "127.0.0.1:8080:8080"
       - "127.0.0.1:8081:8081"
@@ -107,3 +123,4 @@ services:
 
 volumes:
   pgdata:
+  s3data:

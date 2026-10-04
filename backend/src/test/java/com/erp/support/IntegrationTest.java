@@ -23,12 +23,15 @@ import org.springframework.test.context.DynamicPropertySource;
     InventoryFixtures.class,
     ProcurementFixtures.class,
     SalesFixtures.class,
-    AccountingFixtures.class
+    AccountingFixtures.class,
+    HrFixtures.class,
+    PayrollFixtures.class
 })
 public abstract class IntegrationTest {
 
     @DynamicPropertySource
     static void database(DynamicPropertyRegistry registry) {
         TestDatabase.registerProperties(registry);
+        TestObjectStorage.registerProperties(registry);
     }
 }

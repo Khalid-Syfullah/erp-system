@@ -129,7 +129,8 @@ public class CompanyRepository {
                         COMPANIES.TAX_ROUNDING,
                         COMPANIES.FISCAL_YEAR_START_MONTH,
                         COMPANIES.TIMEZONE,
-                        COMPANIES.STATUS)
+                        COMPANIES.STATUS,
+                        COMPANIES.COUNTRY_CODE)
                 .from(COMPANIES)
                 .join(CURRENCIES)
                 .on(CURRENCIES.CODE.eq(COMPANIES.BASE_CURRENCY))
@@ -142,7 +143,8 @@ public class CompanyRepository {
                         r.value5(),
                         r.value6(),
                         r.value7(),
-                        "ACTIVE".equals(r.value8())));
+                        "ACTIVE".equals(r.value8()),
+                        r.value9()));
     }
 
     public List<UUID> allIds() {

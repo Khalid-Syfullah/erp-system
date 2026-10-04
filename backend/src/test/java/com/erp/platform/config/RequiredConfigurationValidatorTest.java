@@ -17,7 +17,8 @@ class RequiredConfigurationValidatorTest {
                 .withProperty("erp.security.allowed-origins", "https://erp.example.test")
                 .withProperty("erp.crypto.field-encryption-keys", "configured")
                 .withProperty("erp.auth.public-base-url", "https://erp.example.test")
-                .withProperty("spring.mail.host", "smtp.example.test");
+                .withProperty("spring.mail.host", "smtp.example.test")
+                .withProperty("erp.files.bucket", "erp-files");
     }
 
     @Test
@@ -32,12 +33,14 @@ class RequiredConfigurationValidatorTest {
     void listsMissingVariablesWithoutEchoingValues() {
         MockEnvironment env = complete().withProperty("spring.datasource.password", "");
         env.setProperty("erp.api.cursor-signing-key", " ");
+        env.setProperty("erp.files.bucket", "");
         env.setActiveProfiles("prod");
 
         assertThatThrownBy(() -> RequiredConfigurationValidator.validate(env))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("ERP_DB_APP_PASSWORD")
                 .hasMessageContaining("ERP_API_CURSOR_SIGNING_KEY")
+                .hasMessageContaining("ERP_FILES_BUCKET")
                 .hasMessageNotContaining("jdbc:postgresql")
                 .hasMessageNotContaining("erp_app");
     }

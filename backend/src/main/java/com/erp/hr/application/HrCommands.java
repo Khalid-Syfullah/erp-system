@@ -40,5 +40,38 @@ public final class HrCommands {
             LocalDate effectiveFrom,
             @Nullable LocalDate effectiveTo) {}
 
+    public record LeaveType(
+            String code,
+            String name,
+            boolean paid,
+            BigDecimal annualEntitlementDays,
+            String accrualMethod,
+            BigDecimal maxCarryForwardDays,
+            boolean allowNegativeBalance,
+            boolean active) {}
+
+    /** A leave request; {@code halfDay} books half a day (start and end on the same working day). */
+    public record LeaveRequest(
+            UUID employeeId,
+            UUID leaveTypeId,
+            LocalDate startDate,
+            LocalDate endDate,
+            boolean halfDay,
+            @Nullable String reason) {}
+
+    public record BankAccount(
+            String bankName,
+            String accountHolder,
+            String accountNumber,
+            @Nullable String iban,
+            @Nullable String swiftBic,
+            boolean primary) {}
+
+    public record AttendanceEntry(
+            String status,
+            java.time.@Nullable OffsetDateTime checkIn,
+            java.time.@Nullable OffsetDateTime checkOut,
+            @Nullable String note) {}
+
     private HrCommands() {}
 }

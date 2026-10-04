@@ -6,6 +6,7 @@ import static com.erp.platform.web.paging.FilterOperator.IN;
 import static com.erp.platform.web.paging.FilterOperator.IS_NULL;
 import static com.erp.platform.web.paging.FilterOperator.LIKE;
 import static com.erp.platform.web.paging.FilterOperator.LTE;
+import static com.erp.platform.web.paging.FilterOperator.NE;
 
 import com.erp.platform.web.paging.ListDefinition;
 import com.erp.platform.web.paging.SortOrder;
@@ -54,6 +55,48 @@ public final class HrListings {
             .filter("departmentId", ValueType.UUID, EQ, IN)
             .filter("employeeId", ValueType.UUID, EQ, IN)
             .filter("effectiveFrom", ValueType.DATE, EQ, GTE, LTE)
+            .build();
+
+    public static final ListDefinition LEAVE_TYPES = ListDefinition.builder("hr.leave_types")
+            .sortable("code", "name", "createdAt")
+            .defaultSort(SortOrder.asc("code"))
+            .filter("code", ValueType.STRING, EQ, IN, LIKE)
+            .filter("isActive", ValueType.BOOLEAN, EQ)
+            .searchable()
+            .build();
+
+    public static final ListDefinition LEAVE_REQUESTS = ListDefinition.builder("hr.leave_requests")
+            .sortable("startDate", "createdAt")
+            .defaultSort(SortOrder.desc("startDate"))
+            .filter("employeeId", ValueType.UUID, EQ, IN)
+            .filter("leaveTypeId", ValueType.UUID, EQ, IN)
+            .enumFilter("status", Set.of("DRAFT", "SUBMITTED", "APPROVED", "REJECTED", "CANCELLED"), EQ, IN, NE)
+            .filter("startDate", ValueType.DATE, EQ, GTE, LTE)
+            .filter("endDate", ValueType.DATE, EQ, GTE, LTE)
+            .build();
+
+    public static final ListDefinition LEAVE_LEDGER = ListDefinition.builder("hr.leave_ledger")
+            .sortable("createdAt")
+            .defaultSort(SortOrder.desc("createdAt"))
+            .filter("employeeId", ValueType.UUID, EQ, IN)
+            .filter("leaveTypeId", ValueType.UUID, EQ, IN)
+            .filter("leaveYear", ValueType.INTEGER, EQ, GTE, LTE)
+            .enumFilter("entryType", Set.of("ACCRUAL", "TAKEN", "ADJUSTMENT", "CARRY_FORWARD", "EXPIRY"), EQ, IN)
+            .build();
+
+    public static final ListDefinition HOLIDAYS = ListDefinition.builder("hr.public_holidays")
+            .sortable("date", "createdAt")
+            .defaultSort(SortOrder.asc("date"))
+            .filter("date", ValueType.DATE, EQ, GTE, LTE)
+            .filter("branchId", ValueType.UUID, EQ, IN, IS_NULL)
+            .build();
+
+    public static final ListDefinition ATTENDANCE = ListDefinition.builder("hr.attendance_records")
+            .sortable("workDate", "createdAt")
+            .defaultSort(SortOrder.desc("workDate"))
+            .filter("employeeId", ValueType.UUID, EQ, IN)
+            .filter("workDate", ValueType.DATE, EQ, GTE, LTE)
+            .enumFilter("status", Set.of("PRESENT", "ABSENT", "HALF_DAY", "REMOTE", "ON_LEAVE", "HOLIDAY"), EQ, IN)
             .build();
 
     private HrListings() {}
