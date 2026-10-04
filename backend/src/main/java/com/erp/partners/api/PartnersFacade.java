@@ -33,6 +33,11 @@ public interface PartnersFacade {
     /** Whether the group is an active customer group of the company (price lists, SAL-1). */
     boolean customerGroupUsable(UUID groupId);
 
+    /** A partner group of the company (any status): Accounting validates group-scoped mappings. */
+    Optional<GroupInfo> group(UUID groupId);
+
+    record GroupInfo(UUID id, String code, String appliesTo, boolean active) {}
+
     /** Code and name of partners by ID (unknown IDs are skipped), for display. */
     Map<UUID, PartnerSummary> partners(Collection<UUID> partnerIds);
 

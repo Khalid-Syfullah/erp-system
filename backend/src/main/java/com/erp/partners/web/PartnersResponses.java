@@ -1,7 +1,7 @@
 package com.erp.partners.web;
 
 import com.erp.partners.application.PartnerViews;
-import com.erp.partners.domain.BankAccountNumbers;
+import com.erp.platform.banking.BankAccountNumbers;
 import com.erp.platform.web.EntityTags;
 import java.time.OffsetDateTime;
 import java.util.List;

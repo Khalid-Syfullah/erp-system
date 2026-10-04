@@ -277,7 +277,7 @@ flowchart BT
   payroll --> hr
   accounting --> org
   accounting --> partners
-  accounting -. events .-> inventory
+  accounting -. api + events .-> inventory
   accounting -. events + ports .-> procurement
   accounting -. events + ports .-> sales
   accounting -. events .-> payroll
@@ -305,7 +305,7 @@ Allowed dependencies in table form. This table is the source of truth for `allow
 | procurement | org, partners, inventory |
 | sales | org, partners, inventory |
 | payroll | org, hr |
-| accounting | org, partners, inventory::events, procurement::{api, events}, sales::{api, events}, payroll::events (`api` here is used only to **implement ports** defined by those modules) |
+| accounting | org (incl. `org::events`), partners, inventory::{api, events}, procurement::{api, events}, sales::{api, events}, payroll::events (`procurement`/`sales` `api` is used only to **implement ports** defined by those modules; `inventory::api` for category ancestry, reason codes and the valuation total, ADR-038) |
 | reporting | org, accounting::api, plus reporting views of all modules |
 | admin | org, auth |
 
@@ -499,7 +499,7 @@ The "Sync consumers" column lists consumers that run in the publisher's transact
 
 | Event (`module.aggregate.fact`) | Publisher | Key payload | Sync consumers | Async consumers |
 |---|---|---|---|---|
-| `org.company.created` | Org | companyId, baseCurrency, country | — | Accounting (seed default CoA template, if configured; idempotent), Admin (seed settings) |
+| `org.company.created` (v1, published synchronously in the creating transaction, ADR-038; `CompanyCreated`) | Org | companyId, code, baseCurrency, countryCode, fiscalYearStartMonth, timezone | Accounting (seeds the `STANDARD_SME` chart, mappings, journals, settings and the current fiscal year; idempotent, plus a start-up backfill) | Admin (seed settings, later) |
 | `auth.user.locked` | Auth | userId, reason | — | Notifications |
 | `inventory.stock_movement.posted` (v1, published synchronously in the posting transaction, ADR-035) | Inventory | movementId, number, movementType (`OPENING`, `PURCHASE_RECEIPT`, `PURCHASE_RETURN`, `SALES_ISSUE`, `SALES_RETURN`, `TRANSFER`, `TRANSFER_SHIP`, `TRANSFER_RECEIVE`, `ADJUSTMENT`, `SCRAP`, `COUNT_ADJUSTMENT`, `REVERSAL`), accountingDate, sourceRef {module, type, id, number}?, partnerId?, reasonCodeId?, reversalOfId?, lines[{lineId, variantId, categoryId, warehouseId, branchId, locationId, quantityBase, unitCostBase, valueBase, referenceValueBase? (PURCHASE_RETURN: original receipt value)}]: one line per ledger row; quantities and values signed (+ in, − out), values in base-currency minor units | Accounting (stock valuation entries) | Reporting projections |
 | `procurement.goods_receipt.posted` (v1, synchronous in the posting transaction) | Procurement | receiptId, number, poId, supplierId, stockMovementId, receiptDate, currency, exchangeRate, lines[{receiptLineId, poLineId, variantId, quantityBase, poUnitPrice (net, per base unit, PO currency), valueBase}] | — | Notifications (later) |

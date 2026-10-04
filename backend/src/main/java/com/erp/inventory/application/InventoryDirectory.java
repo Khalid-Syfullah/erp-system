@@ -3,6 +3,7 @@ package com.erp.inventory.application;
 import com.erp.inventory.api.InventoryFacade;
 import com.erp.inventory.domain.MovementType;
 import com.erp.inventory.domain.UomConversion;
+import com.erp.inventory.persistence.CategoryRepository;
 import com.erp.inventory.persistence.MovementRepository;
 import com.erp.inventory.persistence.ProductRepository;
 import com.erp.inventory.persistence.ReferenceRepository;
@@ -18,6 +19,7 @@ import com.erp.platform.web.ApiException;
 import com.erp.platform.web.FieldViolation;
 import com.erp.platform.web.PlatformErrorCode;
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -40,6 +42,7 @@ class InventoryDirectory implements InventoryFacade {
     private final MovementLineResolver resolver;
     private final PostingEngine engine;
     private final ReferenceRepository references;
+    private final CategoryRepository categories;
     private final AuditPort audit;
 
     InventoryDirectory(
@@ -53,6 +56,7 @@ class InventoryDirectory implements InventoryFacade {
             MovementLineResolver resolver,
             PostingEngine engine,
             ReferenceRepository references,
+            CategoryRepository categories,
             AuditPort audit) {
         this.movements = movements;
         this.warehouses = warehouses;
@@ -64,6 +68,7 @@ class InventoryDirectory implements InventoryFacade {
         this.resolver = resolver;
         this.engine = engine;
         this.references = references;
+        this.categories = categories;
         this.audit = audit;
     }
 
@@ -398,6 +403,38 @@ class InventoryDirectory implements InventoryFacade {
         return warehouses
                 .find(CurrentContext.requireCompany(), warehouseId, null)
                 .map(w -> new WarehouseInfo(w.id(), w.code(), w.name(), w.branchId(), w.active()));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<UUID> categoryAncestry(UUID categoryId) {
+        UUID companyId = CurrentContext.requireCompany();
+        List<UUID> ancestry = new ArrayList<>();
+        UUID current = categoryId;
+        while (current != null && ancestry.size() < 100) {
+            InventoryViews.Category category =
+                    categories.find(companyId, current).orElse(null);
+            if (category == null) {
+                break;
+            }
+            ancestry.add(category.id());
+            current = category.parentId();
+        }
+        return List.copyOf(ancestry);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<ReasonCodeInfo> reasonCode(UUID reasonCodeId) {
+        return references
+                .findReasonCode(CurrentContext.requireCompany(), reasonCodeId)
+                .map(r -> new ReasonCodeInfo(r.id(), r.code(), r.appliesTo(), r.active()));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public BigDecimal valuationTotalBase() {
+        return stock.valuationTotal(CurrentContext.requireCompany());
     }
 
     @Override

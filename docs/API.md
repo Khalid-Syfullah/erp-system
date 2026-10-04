@@ -451,23 +451,24 @@ Branch-restricted users see quotations, orders, deliveries and returns of their 
 
 | Method & path | Permission |
 |---|---|
-| `GET/POST {c}/accounts` (tree: `?view=tree`) · `GET/PATCH …/{id}` [A] · `POST …/{id}/{deactivate|activate}` | `accounting.account.read` / `.manage` |
+| `GET/POST {c}/accounts` · `GET {c}/accounts/tree` · `GET/PATCH …/{id}` [A] · `POST …/{id}/{deactivate|activate}` [A] (ADR-038) | `accounting.account.read` / `.manage` |
 | `GET/PUT {c}/account-mappings` [A] (bulk upsert) · `GET {c}/account-mappings/resolve?key=&scopeType=&scopeId=` (diagnostic) | `accounting.account_mapping.manage` / `accounting.account.read` |
-| `GET/POST {c}/fiscal-years` (creates the periods) · `POST {c}/fiscal-years/{id}/close` [A][I] → 202 job | `accounting.fiscal_year.manage` / `.close` |
-| `GET {c}/periods` · `POST {c}/periods/{id}/{soft-close|close|reopen}` [A][I] `{reason}` | `accounting.period.read` / `.soft_close` / `.close` / `.reopen` |
+| `GET/POST {c}/fiscal-years` (creates the periods; `GET …/{id}` includes them) · `POST {c}/fiscal-years/{id}/close` [A][I] → 200, synchronous (ADR-038) | `accounting.period.read` (read) / `accounting.fiscal_year.manage` / `.close` |
+| `GET {c}/periods` · `GET …/{id}` · `POST {c}/periods/{id}/{soft-close|close}` [A][I] · `POST {c}/periods/{id}/reopen` [A][I] `{reason}` | `accounting.period.read` / `.soft_close` / `.close` / `.reopen` |
 | `GET/POST {c}/journals` · `PATCH …/{id}` [A] | `accounting.journal.manage` |
 | `GET/POST {c}/journal-entries` (manual, DRAFT; `postImmediately` option [I]) · `GET/PATCH/DELETE …/{id}` [A] · lines | `accounting.journal_entry.read` / `.create` |
 | `POST {c}/journal-entries/{id}/post` [A][I] | `accounting.journal_entry.post` (SoD over threshold) |
 | `POST {c}/journal-entries/{id}/reverse` [A][I] `{reversalDate, reason}` | `accounting.journal_entry.reverse` |
-| `GET {c}/open-items?filter[kind]=RECEIVABLE&filter[partnerId]=…&filter[status][ne]=SETTLED` | `accounting.ar.read` / `accounting.ap.read` (by kind) |
-| `GET/POST {c}/bank-accounts` · `PATCH …/{id}` [A] | `accounting.bank_account.read` / `.manage` |
+| `GET {c}/receivables?filter[partnerId]=…&filter[status][ne]=SETTLED` · `GET {c}/receivables/{id}` (with allocations) | `accounting.ar.read` |
+| `GET {c}/payables?…` · `GET {c}/payables/{id}` (ADR-038: one path per kind, because the permission differs) | `accounting.ap.read` |
+| `GET/POST {c}/bank-accounts` · `GET/PATCH …/{id}` [A] · `GET …/{id}/transactions?from=&to=` (posted bank transactions with running balance and reconciliation marks) | `accounting.bank_account.read` / `.manage` |
 | `GET/POST {c}/payments` (`allocations[]` optional) · `GET/PATCH/DELETE …/{id}` [A] | `accounting.payment.read` / `.create` |
 | `POST {c}/payments/{id}/post` [A][I] · `POST …/{id}/void` [A][I] `{reason}` | `accounting.payment.post` / `.void` |
 | `POST {c}/payments/{id}/allocations` [A][I] `{allocations[{openItemId, amount}]}` · `DELETE {c}/payment-allocations/{id}` [I] | `accounting.payment.allocate` / `.unallocate` |
 | `POST {c}/open-items/net` [I] `{debitItemId, creditItemId, amount}` (credit note vs invoice) | `accounting.payment.allocate` |
 | `GET/POST {c}/expenses` · `GET/PATCH/DELETE …/{id}` [A] · `POST …/{id}/{post|reverse}` [A][I] | `accounting.expense.read` / `.create` / `.post` |
 | `POST/DELETE {c}/bank-reconciliation-marks` `{journalLineIds[], statementReference, statementDate}` | `accounting.bank_reconciliation.manage` |
-| Reports: `GET {c}/reports/trial-balance?from=&to=&branchId=` · `/general-ledger?accountId=&from=&to=` · `/journal?…` · `/profit-and-loss?from=&to=&compareTo=` · `/balance-sheet?asOf=` · `/ar-ageing?asOf=` · `/ap-ageing?asOf=` · `/partner-statement?partnerId=&from=&to=` · `/tax-summary?from=&to=` · `/cash-book?bankAccountId=&from=&to=` (each: `?format=csv|xlsx|pdf` → 202 export job) | `accounting.report.read` (+ `accounting.ar.read`/`ap.read` for ageing) |
+| Reports: `GET {c}/reports/trial-balance?from=&to=&branchId=` · `/general-ledger?accountId=&from=&to=` · `/journal?…` · `/profit-and-loss?from=&to=&compareTo=` · `/balance-sheet?asOf=` · `/ar-ageing?asOf=` · `/ap-ageing?asOf=` · `/partner-statement?partnerId=&from=&to=` · `/tax-summary?from=&to=` · `/cash-book?bankAccountId=&from=&to=` — JSON, amounts at the ledger scale of four decimals; file exports (`?format=csv|xlsx|pdf` → 202 job) come with the export infrastructure (ADR-038) | `accounting.report.read` (+ `accounting.ar.read`/`ap.read` for ageing) |
 | `GET/PUT {c}/settings/accounting` [A] | `accounting.settings.manage` |
 
 ### 17.9 HR

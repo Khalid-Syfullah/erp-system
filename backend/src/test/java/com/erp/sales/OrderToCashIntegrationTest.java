@@ -140,7 +140,9 @@ class OrderToCashIntegrationTest extends IntegrationTest {
                 .singleElement()
                 .satisfies(t -> assertThat(t.taxBase()).isEqualByComparingTo("10"));
         assertThat(sales.<String>read(o, "/invoices/" + invoice + "/settlement", "$.status"))
-                .isEqualTo("UNKNOWN");
+                .isEqualTo("OPEN");
+        assertThat(sales.<String>read(o, "/invoices/" + invoice + "/settlement", "$.openAmount"))
+                .isEqualTo("110.0000");
 
         // Return of 1 EA: stock back at the delivery's cost.
         UUID deliveryLine =

@@ -1,9 +1,11 @@
 package com.erp.org.application;
 
+import com.erp.org.events.CompanyCreated;
 import com.erp.org.persistence.CompanyRepository;
 import com.erp.platform.audit.AuditEvent;
 import com.erp.platform.audit.AuditPort;
 import com.erp.platform.context.CurrentContext;
+import com.erp.platform.events.DomainEvents;
 import com.erp.platform.web.ApiException;
 import com.erp.platform.web.EntityTags;
 import com.erp.platform.web.FieldViolation;
@@ -11,6 +13,7 @@ import com.erp.platform.web.MergePatch;
 import com.erp.platform.web.PlatformErrorCode;
 import com.erp.platform.web.paging.ListQuery;
 import com.erp.platform.web.paging.PageResponse;
+import java.time.Clock;
 import java.time.DateTimeException;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -18,6 +21,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
@@ -48,10 +52,14 @@ public class CompanyService {
 
     private final CompanyRepository companies;
     private final AuditPort audit;
+    private final ApplicationEventPublisher events;
+    private final Clock clock;
 
-    public CompanyService(CompanyRepository companies, AuditPort audit) {
+    public CompanyService(CompanyRepository companies, AuditPort audit, ApplicationEventPublisher events, Clock clock) {
         this.companies = companies;
         this.audit = audit;
+        this.events = events;
+        this.clock = clock;
     }
 
     @Transactional
@@ -79,6 +87,14 @@ public class CompanyService {
                 .detail("code", command.code())
                 .detail("baseCurrency", command.baseCurrency())
                 .build());
+        events.publishEvent(new CompanyCreated(
+                DomainEvents.metadata(CompanyCreated.TYPE, CompanyCreated.SCHEMA_VERSION, id, clock),
+                id,
+                command.code(),
+                command.baseCurrency(),
+                command.countryCode(),
+                command.fiscalYearStartMonth(),
+                command.timezone()));
         return companies.find(id).orElseThrow();
     }
 

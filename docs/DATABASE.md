@@ -954,7 +954,10 @@ erDiagram
 ```sql
 accounting.settings (company_id PK, retained_earnings_account_id NOT NULL → accounts,
   allow_manual_entries_in_soft_closed boolean NOT NULL DEFAULT true,
-  max_rounding_difference_minor_units integer NOT NULL DEFAULT 1, + std)
+  max_rounding_difference_minor_units integer NOT NULL DEFAULT 1,
+  manual_entry_approval_threshold_base numeric(19,4) NULL,   -- ADR-038: above it, a manual entry is posted by someone other than its creator (G-16)
+  coa_template text NOT NULL,                                -- the template the company was seeded with (STANDARD_SME)
+  + std)
 
 accounting.accounts (id, company_id C, code text NOT NULL CHECK (code ~ '^[0-9A-Z.\-]{1,20}$'), name text NOT NULL,
   account_type text NOT NULL CHECK (IN ('ASSET','LIABILITY','EQUITY','REVENUE','EXPENSE')),
@@ -969,6 +972,8 @@ accounting.accounts (id, company_id C, code text NOT NULL CHECK (code ~ '^[0-9A-
   is_control boolean NOT NULL DEFAULT false,        -- AR/AP/inventory/GRNI/tax control: system postings only (no manual lines)
   currency_code char(3) NULL,                       -- if set, only postings in this currency (bank accounts in FX)
   status text NOT NULL DEFAULT 'ACTIVE' CHECK (IN ('ACTIVE','INACTIVE')),
+  is_system boolean NOT NULL DEFAULT false,         -- ADR-038: seeded template account; keeps subtype, postability and status
+  description text NULL,
   + std, UNIQUE (company_id, code),
   CHECK (subtype ↔ type consistency)                -- implemented as CHECK with explicit mapping
 )
@@ -999,7 +1004,8 @@ accounting.periods (id, company_id C, fiscal_year_id → fiscal_years, period_no
 
 accounting.journals (id, company_id C, code text NOT NULL, name text NOT NULL,
   journal_type text NOT NULL CHECK (IN ('GENERAL','SALES','PURCHASE','CASH','BANK','INVENTORY','PAYROLL','CLOSING','OPENING')),
-  is_active, + std, UNIQUE (company_id, code))
+  is_active, is_system boolean NOT NULL DEFAULT false, + std, UNIQUE (company_id, code))
+  -- seeded: GEN, SAL, PUR, BNK, CSH, INV, PAY, CLS, OPN (system journals stay active)
 
 accounting.journal_entries (id, company_id C, journal_id → journals,
   number text NULL,                                          -- gapless per (journal, fiscal year), at posting
@@ -1015,6 +1021,7 @@ accounting.journal_entries (id, company_id C, journal_id → journals,
   posted_at timestamptz NULL, posted_by uuid NULL, + std,
   UNIQUE (company_id, journal_id, number),
   UNIQUE NULLS DISTINCT (company_id, source_event_id),                  -- idempotent event posting
+  -- + UNIQUE (company_id, source_module, source_type, source_id) WHERE entry_type = 'SYSTEM' (one system entry per document)
   CHECK ((status = 'POSTED') = (number IS NOT NULL AND posted_at IS NOT NULL)),
   CHECK (status = 'DRAFT' OR total_debit = total_credit),
   CHECK (entry_type <> 'REVERSAL' OR reversal_of_id IS NOT NULL))
@@ -1049,12 +1056,13 @@ accounting.open_items (id, company_id C,
   original_amount_base numeric(19,4) NOT NULL, open_amount_base numeric(19,4) NOT NULL,
   exchange_rate numeric(19,10) NOT NULL,
   journal_entry_id NOT NULL → journal_entries,
-  status text NOT NULL CHECK (IN ('OPEN','PARTIALLY_SETTLED','SETTLED')),
+  status text NOT NULL CHECK (IN ('OPEN','PARTIALLY_SETTLED','SETTLED','VOIDED')),   -- VOIDED: a voided payment's item (ADR-038)
   settled_at timestamptz NULL, + std,
   UNIQUE (company_id, source_module, source_type, source_id),
   CHECK (open_amount = 0 OR sign(open_amount) = sign(original_amount)),
   CHECK (abs(open_amount) <= abs(original_amount)),
-  CHECK ((status = 'SETTLED') = (open_amount = 0)))
+  CHECK ((status IN ('SETTLED','VOIDED')) = (open_amount = 0)))
+  -- append-only apart from open_amount, open_amount_base, status, settled_at (trigger)
   -- ix (company_id, kind, partner_id, status) WHERE status <> 'SETTLED'; ix (company_id, kind, due_date) WHERE status <> 'SETTLED'
 
 accounting.bank_accounts (id, company_id C, name text NOT NULL, account_id NOT NULL UNIQUE → accounts,  -- subtype BANK or CASH
@@ -1075,21 +1083,23 @@ accounting.payments (id, company_id C, number text NULL,
   status text NOT NULL CHECK (IN ('DRAFT','POSTED','VOIDED')),
   journal_entry_id NULL → journal_entries, void_journal_entry_id NULL → journal_entries, voided_reason text NULL,
   source_module text NULL, source_type text NULL, source_id uuid NULL,     -- e.g. payroll/RUN
-  posted_at, posted_by, + std,
+  requested_allocations jsonb NOT NULL DEFAULT '[]',  -- ADR-038: a draft's [{openItemId, amount}], applied at posting
+  open_item_id uuid NULL → open_items,                -- the payment's own (negative) item, set at posting
+  posted_at, posted_by, voided_at, voided_by, + std,
   UNIQUE (company_id, number),
   CHECK (payment_kind = 'OTHER' OR partner_id IS NOT NULL))
 
 accounting.payment_allocations (id, company_id C,
   payment_id uuid NULL → payments,                  -- NULL when netting credit note against invoice
   open_item_id NOT NULL → open_items,               -- the item being settled
-  counter_open_item_id uuid NULL → open_items,      -- netting partner (credit note / on-account payment)
+  counter_open_item_id uuid NOT NULL → open_items,  -- the settling item: the payment's own item, a credit/debit note (ADR-038)
   allocation_date date NOT NULL,
   amount numeric(19,4) NOT NULL CHECK (amount > 0),  -- in open item currency, reduces |open_amount|
   amount_base numeric(19,4) NOT NULL,
   fx_difference_base numeric(19,4) NOT NULL DEFAULT 0,  -- realized FX gain(−)/loss(+) booked via journal_entry_id
   journal_entry_id NULL → journal_entries,
-  reversed_at timestamptz NULL, reversal_journal_entry_id NULL, + std,
-  CHECK (payment_id IS NOT NULL OR counter_open_item_id IS NOT NULL))
+  reversed_at timestamptz NULL, reversal_journal_entry_id NULL, + std)
+  -- append-only apart from the reversal columns (trigger)
 
 accounting.expenses (id, company_id C, number NULL, expense_date date, accounting_date date,
   payee_name text NOT NULL, partner_id NULL → partners.partners, bank_account_id NOT NULL → bank_accounts,
@@ -1107,7 +1117,8 @@ accounting.period_balances (company_id, period_id → periods, account_id → ac
   opening_balance numeric(19,4) NOT NULL, debit_total numeric(19,4) NOT NULL, credit_total numeric(19,4) NOT NULL,
   closing_balance numeric(19,4) NOT NULL, computed_at timestamptz NOT NULL,
   PRIMARY KEY (company_id, period_id, account_id))
-  -- written at period CLOSE; deleted on reopen. Reports use snapshots for closed periods + live lines for open ones.
+  -- written at period CLOSE (and refreshed for the last period by the year-end closing entry); deleted on reopen.
+  -- Phase 8 reports are computed live from posted lines (ADR-038); the snapshots record what each close saw.
 ```
 
 ### 5.9 `hr`
@@ -1338,16 +1349,25 @@ CREATE TRIGGER trg_journal_period_check BEFORE INSERT OR UPDATE OF status, entry
 -- A5: account check (per line)
 CREATE TRIGGER trg_journal_line_account_check BEFORE INSERT ON accounting.journal_lines
   FOR EACH ROW EXECUTE FUNCTION accounting.assert_account_postable();
+--   active and postable (ck_journal_lines__account_postable), currency of a currency-bound account
+--   (ck_journal_lines__account_currency), and no MANUAL / ADJUSTMENT / OPENING line on a control account
+--   (ck_journal_lines__control_account).
+
+-- A6: the year-end closing entry (ADR-038)
+--   A CLOSED period accepts exactly one kind of posting: entry_type = 'CLOSING' while
+--   current_setting('app.allow_closing_entry', true) = 'on', set (SET LOCAL) only by the year-end close.
 ```
+
+Every guard raises `check_violation` with the constraint name shown, which the application maps to its error code (`409 INVALID_STATE` for immutability, `422 PERIOD_CLOSED`, `422 ACCOUNT_NOT_POSTABLE`, `422 CONTROL_ACCOUNT_MANUAL_POSTING`, `422 UNBALANCED_ENTRY`). `LedgerIntegrityIntegrationTest` exercises each one with raw SQL.
 
 Posting sequence inside `PostingService.post(entry)`, all in one transaction:
 
 1. Validate the entry in memory: balanced, accounts valid, ≥ 2 lines.
 2. Lock the period (`FOR SHARE`) and check that it is open.
-3. Take the number from `platform.document_sequences`.
-4. Insert the header as `DRAFT`.
-5. Insert the lines.
-6. `UPDATE lines SET is_posted = true` while the header is still `DRAFT`, so the line guard allows it.
+3. Insert the header as `DRAFT` (and the open item, if the entry creates one).
+4. Insert the lines.
+5. `UPDATE lines SET is_posted = true` while the header is still `DRAFT`, so the line guard allows it.
+6. Take the number from `platform.document_sequences` (late, ARCHITECTURE.md §6.2; per journal and fiscal year, `JOURNAL:<code>`).
 7. `UPDATE header SET status = 'POSTED', number, posted_at, totals`. From this point on, the line and header guards block any further change.
 
 The deferred trigger then validates the balance at commit.
@@ -1388,14 +1408,15 @@ System postings (event listeners) use exactly the same sequence inside the publi
 |---|---|---|
 | Assign document number | `platform.document_sequences` row `FOR UPDATE`, held until commit | Taken **late**, after stock and open-item locks (ARCHITECTURE.md §6.2). This serializes postings of the same document type for each company, which is the inherent cost of gapless numbering (see DECISIONS.md, ADR-012). |
 | Post journal entry | (sequence) + period `FOR SHARE` | Period close takes the period `FOR UPDATE`, so posting and closing serialize. Period close takes no other locks, so there is no deadlock cycle. |
-| Close period | period `FOR UPDATE`; checks for no drafts in the period | |
+| Close period | period `FOR UPDATE`; checks for no drafts in the period | The snapshot is written in the same transaction; a posting waiting on `FOR SHARE` then sees CLOSED (`AccountingConcurrencyIntegrationTest`). |
 | Stock out (issue/transfer/return to supplier) | `warehouse_stock` rows `FOR UPDATE` (ordered by variant_id) → `stock_balances` rows `FOR UPDATE` (ordered by variant_id, location_id) → `item_valuations` rows `FOR UPDATE` (ordered by variant_id) | Check availability (on_hand − reserved, unless consuming own reservation) after locking. Rows that are missing are created with `INSERT … ON CONFLICT DO NOTHING` and then locked. |
 | Stock in (receipt/return from customer/positive adjustment) | Same order. The valuation row is locked to update the average cost. | |
 | Post a stock movement (every type, including reversals and count adjustments) | movement header `FOR UPDATE` → variants, locations and warehouses `FOR SHARE` → `warehouse_stock` → `stock_reservations` → `stock_balances` → `item_valuations` (each `FOR UPDATE`, in key order) → `document_sequences` | ARCHITECTURE.md §6.2. The whole movement is checked on the locked state before anything is written, so a failing line leaves no partial effect and consumes no number. |
 | Post a stock count | count header `FOR UPDATE` → `warehouse_stock` → `stock_balances` (read the current quantities) → then the movement posting above | The differences are computed from locked rows, so no movement can slip in between. |
 | Reserve stock | `warehouse_stock` `FOR UPDATE` → insert reservation | |
 | Release/consume reservation | `warehouse_stock` `FOR UPDATE` → reservation `FOR UPDATE` | |
-| Allocate payment | `open_items` `FOR UPDATE` (ordered by id) → payment `FOR UPDATE` | |
+| Allocate payment | payment `FOR UPDATE` → `open_items` `FOR UPDATE` (ordered by id) | The payment is a document header (ARCHITECTURE.md §6.2). Netting a credit note locks only the two items. |
+| Unallocate / void payment | payment `FOR UPDATE` → allocation `FOR UPDATE` → `open_items` (ordered by id) → FX entry | Unallocate reads the allocation unlocked to find its payment, then locks in this order (ADR-038). |
 | Edit draft document | Optimistic version check | Concurrent edits get 409. |
 | Fulfil order line (delivery / receipt / invoice) | Order header `FOR UPDATE` (serializes fulfilment per order) → lines | Prevents two deliveries from over-delivering the same line. |
 | Post a goods receipt / purchase return (Phase 6) | Receipt or return header `FOR UPDATE` → purchase order header `FOR UPDATE` → (Inventory's posting locks, §9 above) → order and receipt line counters → `document_sequences` (stock movement, then receipt or return number) | The order lock serializes all receipts, returns and bills of one order, so open quantities are read and written by one transaction at a time. |

@@ -1,11 +1,11 @@
 package com.erp.partners.application;
 
 import com.erp.org.api.OrgFacade;
-import com.erp.partners.domain.BankAccountNumbers;
 import com.erp.partners.persistence.BankAccountRepository;
 import com.erp.partners.persistence.PartnerRepository;
 import com.erp.platform.audit.AuditEvent;
 import com.erp.platform.audit.AuditPort;
+import com.erp.platform.banking.BankAccountNumbers;
 import com.erp.platform.context.CurrentContext;
 import com.erp.platform.crypto.FieldEncryptor;
 import com.erp.platform.security.ReauthenticationGuard;

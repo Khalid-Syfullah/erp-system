@@ -61,6 +61,19 @@ public class DocumentNumberService {
         return format.render(fiscalYear, value);
     }
 
+    /**
+     * The next number of a document type that is not registered as a {@link DocumentType} bean, such
+     * as the per-journal sequences of user-defined journals: the company's format if it configured
+     * one, else {@code fallback}.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public String next(UUID companyId, String documentType, String fiscalYear, NumberFormat fallback) {
+        NumberFormat format = effective(companyId).getOrDefault(documentType, fallback);
+        long value = repository.allocate(
+                companyId, documentType, fiscalYear, format.prefixFor(fiscalYear), format.padding());
+        return format.render(fiscalYear, value);
+    }
+
     @Transactional(readOnly = true)
     public FormatsView formats() {
         UUID companyId = CurrentContext.requireCompany();

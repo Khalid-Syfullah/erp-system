@@ -35,6 +35,13 @@ class PartnersDirectory implements PartnersFacade {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public Optional<GroupInfo> group(UUID groupId) {
+        return groups.find(CurrentContext.requireCompany(), groupId)
+                .map(g -> new GroupInfo(g.id(), g.code(), g.appliesTo(), g.isActive()));
+    }
+
+    @Override
     @Transactional
     public boolean customerGroupUsable(UUID groupId) {
         return groups.findForUse(CurrentContext.requireCompany(), groupId)

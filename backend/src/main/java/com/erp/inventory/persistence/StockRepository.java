@@ -209,6 +209,15 @@ public class StockRepository {
                 .execute();
     }
 
+    /** Σ item valuations of the company (base currency). */
+    public BigDecimal valuationTotal(UUID companyId) {
+        BigDecimal total = dsl.select(DSL.sum(ITEM_VALUATIONS.TOTAL_VALUE_BASE))
+                .from(ITEM_VALUATIONS)
+                .where(ITEM_VALUATIONS.COMPANY_ID.eq(companyId))
+                .fetchOne(0, BigDecimal.class);
+        return total == null ? BigDecimal.ZERO : total;
+    }
+
     public void updateValuation(UUID companyId, UUID variantId, Valuation valuation) {
         dsl.update(ITEM_VALUATIONS)
                 .set(ITEM_VALUATIONS.QUANTITY_BASE, valuation.quantity())

@@ -47,6 +47,20 @@ public interface InventoryFacade {
     /** Company setting: receipts may exceed the open quantity by this percentage (PRC-1). */
     BigDecimal overReceiptTolerancePercent();
 
+    /**
+     * The category and its ancestors, nearest first (empty for an unknown category): Accounting
+     * resolves category-scoped account mappings up the tree (PRODUCT_SPEC.md §8.6).
+     */
+    List<UUID> categoryAncestry(UUID categoryId);
+
+    /** A reason code of the company (any status). */
+    Optional<ReasonCodeInfo> reasonCode(UUID reasonCodeId);
+
+    /** Σ item valuations of the company in base currency: what the inventory GL accounts must hold (ACC-6). */
+    BigDecimal valuationTotalBase();
+
+    record ReasonCodeInfo(UUID id, String code, String appliesTo, boolean active) {}
+
     /** The originating document. */
     record SourceRef(
             String module, String type, UUID id, @Nullable String number) {}

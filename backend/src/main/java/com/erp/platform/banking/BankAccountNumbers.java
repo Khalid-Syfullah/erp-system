@@ -1,4 +1,4 @@
-package com.erp.partners.domain;
+package com.erp.platform.banking;
 
 import java.math.BigInteger;
 import java.util.Locale;

@@ -450,22 +450,24 @@ stateDiagram-v2
 
 System-generated entries are created directly in the posting transaction and never exist as drafts that users can see.
 
+A reversal is dated in a period that takes postings (normally today's), mirrors every line and links both entries (`reversal_of_id` / `reversed_by_id`). An entry is reversed at most once, and a reversal is not reversed again. Above the company's `manual_entry_approval_threshold_base`, a manual entry must be posted by someone other than its creator (G-16, ADR-038).
+
 ### 8.5 Period and year close
 
-1. **Soft close** (`accounting.period.soft_close`). Only privileged users can post.
+1. **Soft close** (`accounting.period.soft_close`). Only privileged users (`accounting.period.post_soft_closed`) can post; manual entries only while the company setting `allow_manual_entries_in_soft_closed` is on.
 2. **Close** (`accounting.period.close`). Preconditions:
    - There are no DRAFT manual entries dated in the period. Drafts must be posted, moved or deleted.
    - All earlier periods are closed.
    - The trial balance is balanced.
 
    On close, `period_balances` snapshots are written.
-3. **Reopen** (`accounting.period.reopen`). The year must be open and a reason is required. Snapshots are deleted.
+3. **Reopen** (`accounting.period.reopen`). The year must be open and a reason is required. Periods reopen latest first: no later period may be closed. Snapshots are deleted.
 4. **Year-end close** (`accounting.fiscal_year.close`). Preconditions: all 12 periods are closed. The close:
    - Creates a `CLOSING` entry in the CLS journal, dated on the last day of the year. It zeroes every REVENUE and EXPENSE account into **retained earnings**.
    - Marks the year `CLOSED`.
    - Creates the next fiscal year and its periods if they do not already exist.
 
-   Balance-sheet accounts carry forward naturally, because balances are cumulative.
+   Balance-sheet accounts carry forward naturally, because balances are cumulative. The close runs synchronously (ADR-038). The closing entry is the only posting the last, already closed period accepts; that period's snapshot is refreshed with it.
 
 ### 8.6 Posting matrix (automatic entries)
 
@@ -494,7 +496,7 @@ Notation: Dr/Cr account mapping keys (DATABASE.md §5.8), resolved through accou
 | `payroll.run.paid` | SALARIES_PAYABLE | Bank (`payment_bank_account_id`); an `accounting.payments` row of kind OTHER is created | — |
 | Payment void | Mirror of the payment entry; allocations reversed | | Open items restored |
 
-**Unallocated payments (v1).** The unallocated part of a payment stays on the AR/AP control account as a negative open item. This keeps the invariant "control account = Σ open items" simple. The CUSTOMER_ADVANCE and SUPPLIER_ADVANCE mapping keys are reserved for explicit prepayment documents, a future feature (ADR-014).
+**Unallocated payments (v1).** A posted payment opens a negative open item for its full amount, and allocations net it against invoices or bills (ADR-038). The unallocated part therefore stays on the AR/AP control account as a negative open item. This keeps the invariant "control account = Σ open items" simple. The CUSTOMER_ADVANCE and SUPPLIER_ADVANCE mapping keys are reserved for explicit prepayment documents, a future feature (ADR-014).
 
 ### 8.7 Accounts receivable and payable
 
@@ -502,7 +504,7 @@ Notation: Dr/Cr account mapping keys (DATABASE.md §5.8), resolved through accou
 - **Allocation.** A payment, or a negative open item such as a credit note or an unapplied payment, is allocated to positive open items of the **same partner, same kind and same currency**. Cross-currency allocation is not supported in v1. Each allocation:
   - reduces `open_amount` on both sides
   - updates status
-  - computes the realized FX difference = amount × (payment rate − item rate), in base currency, and posts it
+  - computes the realized FX difference = amount × (payment rate − item rate), in base currency, and posts it. Each item falls at its own rate, and an allocation that settles an item takes exactly its remaining base amount, so no base residue is left on the control account.
 - An allocation can be undone (`accounting.payment.unallocate`). That reverses the FX entry and restores the open amounts.
 - **Ageing:** buckets for current, 1–30, 31–60, 61–90 and >90 days past due, by due date and as of a date.
 - **Customer statement:** opening balance, documents, payments and closing balance for a date range.
@@ -510,7 +512,7 @@ Notation: Dr/Cr account mapping keys (DATABASE.md §5.8), resolved through accou
 
 ### 8.8 Payments
 
-- Payment state machine: `DRAFT → POSTED → VOIDED`. A void creates a reversal entry, reverses allocations, and needs `accounting.payment.void` plus a reason.
+- Payment state machine: `DRAFT → POSTED → VOIDED`. A void creates a reversal entry, reverses allocations, and needs `accounting.payment.void` plus a reason. The payment's open item ends as `VOIDED`. Allocations given on a draft are applied when it is posted.
 - A payment is created in the payment's currency, which must equal the bank account currency.
 - Batch supplier payment proposal: select open AP items due by a date and generate draft payments per supplier. This is a v1.1 nice-to-have, listed in DEVELOPMENT_PLAN Phase 8 as optional.
 - Bank reconciliation in v1 is manual. A user marks posted bank-account journal lines as reconciled against a statement reference. The marks are stored in `accounting.bank_reconciliation_marks`, never on the immutable journal lines. A future phase adds statement import.
@@ -530,7 +532,7 @@ Expense vouchers cover immediate expenses paid from a bank or cash account (pett
 - Tax summary (output vs input by tax code and period)
 - Cash and bank book
 
-All report amounts reconcile to the GL. Reports for closed periods use snapshots. Reports for open periods compute live.
+All report amounts reconcile to the GL. Phase 8 computes every report live from posted lines and returns JSON; file exports come with the export infrastructure (ADR-038). Period-close snapshots record what each close saw.
 
 ---
 

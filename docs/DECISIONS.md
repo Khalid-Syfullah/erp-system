@@ -790,6 +790,51 @@ The Sales brief asked for customers and customer contacts, quotations with "quot
 - Concurrent deliveries, invoices, credit notes, confirmations and acceptances serialize on row and advisory locks: tests show exactly one winner, the counters stay consistent and reservations never exceed the stock.
 - Order lines carry five fulfilment fields (reservation, reserved, delivered, returned, invoiced); the database guards that freeze confirmed orders allow exactly these to change.
 
+### ADR-038 — Phase 8 accounting: scope, the posting API and deviations (Accepted, Phase 8)
+
+**Context**
+
+The Accounting brief asked for the chart of accounts with account types, fiscal years and periods, journal entries and lines, the general ledger and trial balance, AR and AP, customer invoices and supplier bills, payments, expenses, bank accounts and bank transactions, with a posting engine, journal validation, period closing, APIs and tests. Its rules: every posted entry balances, drafts are editable, posted entries are never silently changed and are corrected by reversal, closed periods take no normal postings, financial operations are atomic and exact-decimal and auditable, and other modules implement no accounting logic. It also asked for "a clear accounting service/domain API that Sales and Procurement can use". The plan's Phase 8 still carried the infrastructure that ADR-037 moved here (event registry, document rendering and e-mail, S3, CSV imports, report file exports). The user chose to defer that infrastructure again and to deliver every report as JSON.
+
+**Decision**
+
+- **The accounting API for other modules is the one ARCHITECTURE.md §5.2 allows.** Accounting depends on Sales and Procurement, so they cannot call it. They use it in two ways, and implement no accounting logic themselves:
+  - *Events:* they publish their documents (`inventory.stock_movement.posted`, `procurement.supplier_bill.posted` / `debit_note.posted`, `sales.invoice.posted` / `credit_note.posted`), and `OperationalPostings` books them synchronously in the publisher's transaction through `PostingService` per the PRODUCT_SPEC.md §8.6 matrix (ADR-005). A failed posting (closed period, missing mapping) rolls the operational document back. Each event is booked once: `source_event_id` is unique, plus a unique system entry per source document.
+  - *Ports they define, implemented by Accounting:* `CustomerCreditExposurePort` (open receivables in base currency), `InvoiceSettlementPort` and `BillSettlementPort` (open amount and status of the document's open item).
+  - Inside the module, `PostingService` is the single posting engine: payments, expenses, reversals, FX differences, netting and the year-end close all use it.
+- **Posting engine** (DATABASE.md §8.1): validation in memory (ACC-1, ACC-2, accounts postable and in currency, control accounts for system entries only), the period `FOR SHARE` (ACC-4: OPEN; SOFT_CLOSED with `accounting.period.post_soft_closed`, manual entries only where the company allows it; CLOSED never), header as DRAFT, lines, lines marked posted, the gapless number taken late (`JOURNAL:<code>` per journal and fiscal year, `<code>-{FY}-000001`), header flipped to POSTED. The database re-checks all of it: the deferred balance trigger, the immutability triggers, the period trigger and the account trigger. A system entry off by at most the company's rounding tolerance gets one ROUNDING_DIFFERENCE line.
+- **Corrections are reversals:** a reversal is a new entry with debits and credits swapped and `reversal_of_id` set, dated in an open period; the original stays POSTED and only receives `reversed_by_id`. A reversal is not reversed again; an entry is reversed once.
+- **Subledger** (ADR-022): every invoice, bill, credit and debit note opens an item; a posted payment opens its own negative item for its full amount, and allocations net a negative item against a positive one of the same partner, kind and currency. Each item falls at its own rate; the difference is the realized FX gain or loss, booked as a separate entry. Unallocating and voiding reverse those entries; a voided payment's item ends as `VOIDED`. Control accounts always equal Σ open items in base currency (ACC-6). Open items and allocations are append-only apart from their running amounts and reversal marks.
+- **Company setup.** Org publishes `org.company.created` (new `org::events`) synchronously from `CompanyService.create`. Accounting seeds the company in the same transaction: the 31-account `STANDARD_SME` chart (all system accounts), the default mappings, nine journals, settings and the current fiscal year with its twelve periods. Companies that predate Phase 8 are backfilled on application start. `platform.tx.CompanySwitch` runs the seeding with the new company's `app.company_id` so that RLS applies.
+- **Period and year close:** close requires no drafts in the period, all earlier periods closed and a level trial balance, and writes the `period_balances` snapshot. Reopen needs a reason, an open fiscal year and goes latest period first; it drops the snapshot. **The year-end close is synchronous**, not a 202 job: with every period closed, it posts the CLOSING entry (P&L into retained earnings) into the closed last period, the only entry the database accepts there (GUC `app.allow_closing_entry`, set only by the year-close service). It then refreshes that period's snapshot, closes the year and opens the next.
+- **Additions to the specification:**
+  - settings `manual_entry_approval_threshold_base` (G-16 SoD for manual entries: above it, the poster must not be the creator) and `coa_template`
+  - `is_system` on accounts and journals (system accounts keep their subtype, postability and status)
+  - open item status `VOIDED`
+  - `payments.requested_allocations` (a draft's allocations, applied at posting), `payments.open_item_id`, `voided_at` / `voided_by`
+  - `payment_allocations.counter_open_item_id` is NOT NULL: every allocation names its settling item
+  - the control-account trigger rejects MANUAL, ADJUSTMENT and OPENING lines on control accounts
+  - `InventoryFacade.categoryAncestry` / `reasonCode` / `valuationTotalBase` and `PartnersFacade.group`, for account determination, scope validation and the inventory invariant; `DocumentNumberService.next(…, fallback format)` for per-journal sequences; bank account number handling moved from Partners to `platform.banking`
+- **API deviations** (API.md §17.8):
+  - the account tree is `GET {c}/accounts/tree`
+  - open items are `GET {c}/receivables` and `GET {c}/payables` (plus `/{id}` with its allocations), because `@RequiresPermission` cannot pick `ar.read` or `ap.read` by a query filter
+  - `GET {c}/bank-accounts/{id}/transactions?from=&to=` is the cash book with reconciliation marks (the brief's bank transactions)
+  - `POST {c}/fiscal-years/{id}/close` answers `200` with the closed year
+  - reports are JSON only, computed live from posted lines (the snapshots serve period close and later Reporting); amounts carry the ledger scale of four decimals
+- **Dependencies:** `accounting` may use `inventory :: api` and `org :: events` in addition to the documented ones.
+- **Deferred:**
+  - the Event Publication Registry, `processed_events`; the document rendering and notification pipeline; S3 files with MinIO; the CSV import framework; report exports (`?format=csv|xlsx|pdf`) — again with their first asynchronous consumer (user decision)
+  - the events `accounting.period.closed` / `reopened` and `accounting.payment.posted` — no consumer before Reporting and notifications
+  - PAY_COMPONENT-scoped mappings → Phase 9 (Payroll)
+  - the batch supplier payment proposal (optional)
+  - an Org-side guard (a port Accounting implements, like `hasPostings` in DATABASE.md §8.3) against changing `fiscal_year_start_month` once fiscal years exist. Until then such a change affects only future `POST {c}/fiscal-years` and fiscal-year labels of new document numbers; existing years, periods and entries are stored and stay as they are. The base currency already cannot change after creation.
+
+**Consequences**
+
+- The Phase 5–7 integration tests and the new accounting suites assert the exact GL lines of every operational flow, and every suite ends with the invariant check (level trial balance, AR = Σ open receivables, AP = Σ open payables, inventory GL = valuation). The daily `accounting-invariants` job runs the same check for every company.
+- Seeding in the creating transaction means a company is never visible without its books. The cost is that company creation now also inserts about 70 accounting rows.
+- The synchronous year close holds the year's period locks for the duration of one entry and one snapshot, which is acceptable at the documented scale (ARCHITECTURE.md §10).
+
 ---
 
 ## 2. Requirement conflicts identified and how they were resolved
@@ -812,6 +857,7 @@ The Sales brief asked for customers and customer contacts, quotations with "quot
 | C-14 | The Phase 5 brief asks for receipts, issues, returns and pricing fields in Inventory, while the specification creates receipts and issues only from Procurement and Sales documents and keeps prices in price lists. | ADR-035: the stock operations exist in Inventory and are exposed to those modules through `InventoryFacade`; product master data carries no prices. |
 | C-15 | The Phase 6 brief shows a workflow `Draft → Submitted → Approved → Ordered → Received → Completed` and asks for supplier payments "where the architecture specifies them"; the specification documents a different order workflow and makes payments an Accounting document. | ADR-036: the documented state machines are implemented; payments and all accounting entries come with Accounting (Phase 8), fed by the events Procurement publishes now. |
 | C-16 | The Sales brief asks for customer payments and for "quotation approval" and "order approval", on a workflow ending in Payment; the specification makes payments an Accounting document and has no approval states for quotations or orders. | ADR-037: the documented state machines are implemented, with the customer's acceptance and the credit-checked confirmation (plus price, discount and credit overrides) as the approvals; payments come with Accounting (Phase 8), fed by the invoice events Sales publishes now. |
+| C-17 | The Accounting brief asks for "a clear accounting service/domain API that Sales and Procurement can use", while Accounting depends on Sales and Procurement and they may not depend on it. | ADR-038: Sales and Procurement publish their documents as events that Accounting books through its single posting engine, and use the ports they define (credit exposure, settlement), which Accounting implements. No other module books entries. |
 
 ---
 

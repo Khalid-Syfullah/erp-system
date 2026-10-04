@@ -560,41 +560,54 @@ A phase is done only when **all** of the following hold:
 | Sales reporting views | Phase 10 | Reporting |
 | Automatic draft credit notes on return receipt (optional in PRODUCT_SPEC.md §9.2) | Later | — |
 
-### Phase 8 — Accounting
+### Phase 8 — Accounting ✅
 
 **Prerequisites:** Phases 4–7.
 
-**Deliverables:**
+**Scope** (ADR-038): the Accounting brief (chart of accounts, account types, fiscal years and periods, journal entries, general ledger and trial balance, AR/AP, the financial side of customer invoices and supplier bills, payments, expenses, bank accounts and transactions) with its posting engine, period close and reports. The infrastructure carried over from Phase 7 was deferred again and every report is JSON (both decided by the user for this phase).
 
-- Carried over from Phase 7 (ADR-037): the Event Publication Registry with `processed_events` and the `org.company.created` seeding pipeline; the document rendering and notification pipeline (invoice, quotation and PO PDFs, e-mail sending, the bank-detail change notification); S3 files with MinIO; the CSV import framework (partners, opening stock).
-- Accounting settings, the CoA (template `STANDARD_SME` seeding through the company-created pipeline, plus a backfill job for existing companies), account mappings with resolution precedence, fiscal years and periods, and journals.
-- **Posting engine:**
-  - `PostingService` with all the database guards (DATABASE.md §8.1)
-  - period checks
-  - gapless journal numbering
-  - rounding-difference handling
-  - idempotency per source event
-  - reversal service
-- **Synchronous listeners** for every posting event in the PRODUCT_SPEC.md §8.6 matrix: inventory movements, supplier bills and debit notes, invoices and credit notes. Payroll events are added in Phase 9.
-- **Integration tests** for every Phase 5–7 flow, now asserting the exact GL entries. They also cover rollback: a missing mapping or a closed period rolls back the operational document.
-- AR/AP open items and the ports implemented for Sales and Procurement (credit exposure, settlement).
-- Payments (post, void) — customer receipts and supplier payments, the last step of the O2C and P2P flows — allocations and netting, realized FX, and on-account remainders.
-- Bank accounts.
-- Expenses.
-- Bank reconciliation marks.
-- Manual journal entries with SoD.
-- Period soft-close, close (snapshots), reopen, and year-end close (async job).
-- **Financial reports** (PRODUCT_SPEC.md §8.10) with CSV, XLSX and PDF export.
-- **Invariant jobs:** trial balance balanced, control accounts = subledgers, inventory GL = valuation.
-- Optional: the batch supplier payment proposal.
+**Delivered:**
 
-**Exit criteria:**
+1. **Company setup:** `org.company.created` (new `org::events`, synchronous) seeds the `STANDARD_SME` chart (31 system accounts), the default mappings, nine journals, settings and the current fiscal year with twelve periods; existing companies are backfilled at start-up.
+2. **Master data:** accounts as a tree (`/accounts/tree`), group and postable accounts, currency-bound accounts, activation rules (system accounts, mapped accounts and bank GL accounts stay active, used accounts keep their subtype); account mappings with scopes (category with ancestors, warehouse, partner group, tax code, reason code, department) and `/resolve`; journals; settings (retained earnings, soft-closed manual entries, rounding tolerance, manual-entry SoD threshold).
+3. **Posting engine** (`PostingService`): in-memory validation (ACC-1, ACC-2, postable accounts in currency, control accounts for system entries only), the period `FOR SHARE` with the soft-close privilege (ACC-4), draft header → lines → lines posted → late gapless number per journal and fiscal year → POSTED; rounding lines within the tolerance; idempotency per source event; reversals. The database re-checks everything (DATABASE.md §8.1).
+4. **Manual journal entries:** drafts edited and deleted freely, posted with SoD above the threshold, `postImmediately`, reversal by a new entry dated in an open period (once; reversals are not reversed).
+5. **Operational postings** (PRODUCT_SPEC.md §8.6) from the events of Phases 5–7: opening, receipts through GRNI, purchase returns with PPV, adjustments by reason code, transfers between inventory accounts, deliveries at cost, sales returns, movement reversals; bills and debit notes (GRNI, PPV, expenses, input tax, AP); invoices and credit notes (revenue, returns, output tax, AR). A failed posting rolls the document back.
+6. **AR/AP:** open items for invoices, credit notes, bills, debit notes and payments; `GET {c}/receivables` / `payables` with allocations; netting (`POST {c}/open-items/net`); `CustomerCreditExposurePort`, `InvoiceSettlementPort` and `BillSettlementPort` implemented.
+7. **Payments:** customer receipts (`RCT-`) and supplier payments (`PAY-`) with allocations on the draft or later, on-account remainders, unallocation, void with reason, realized FX gains and losses.
+8. **Bank accounts** (field-encrypted numbers, shared with Partners through `platform.banking`), the bank transactions/cash book view and reconciliation marks.
+9. **Expenses** (`EXP-`): lines on expense accounts with purchase tax codes (tax-inclusive or not), posted from the bank, reversed.
+10. **Periods and years:** soft close, close (no drafts, earlier periods closed, level trial balance, snapshot), reopen latest-first with a reason, the synchronous year-end close (CLOSING entry into retained earnings, next year opened).
+11. **Reports (JSON):** trial balance, general ledger, journal, P&L (with comparison), balance sheet, AR/AP ageing, partner statements, tax summary, cash book.
+12. **Invariants:** `LedgerInvariantCheck` (level trial balance, AR = Σ open receivables, AP = Σ open payables, inventory GL = valuation), run daily by `accounting-invariants` and at the end of every accounting test.
+13. **Security and audit:** every endpoint on the catalogued `accounting.*` permissions, MFA for the sensitive ones, `Idempotency-Key` on every posting, period and allocation action, every mutation and transition audited.
+14. **Tests:** 1151 in 99 classes. New in this phase:
+    - `JournalEntryIntegrationTest` (balanced and unbalanced entries, drafts vs posted, reversal, SoD, exact decimals) and `LedgerIntegrityIntegrationTest` (each database guard with raw SQL: immutability, the deferred balance check, closed periods, control accounts, one entry per event)
+    - `PeriodCloseIntegrationTest` (closed-period posting, ordering, drafts, soft-close privilege, reopen, the rollback of a stock movement whose posting is refused, the year-end close)
+    - `OperationalPostingIntegrationTest` (exact GL lines of the P2P and O2C flows, a redelivered event books nothing, a missing mapping rolls the delivery back), and the existing Phase 5–7 suites now running with the listeners
+    - payment, expense, report, chart/mapping/setup suites; `AccountingConcurrencyIntegrationTest` (double posting, gapless numbers, concurrent allocations, unallocate vs void, posting vs period close)
+    - `AccountingDomainTest`, the seeded property tests `AccountingPropertyTest` (balancing, settlement without residue) and `OperationalSequencePropertyTest` (random operational sequences keep every invariant after each step)
 
-- Property-based tests: random operational sequences always yield a balanced trial balance, AR = Σ open receivables, AP = Σ open payables, and inventory account = valuation.
-- Posting during a concurrent period close is safe.
-- Posted entries are provably immutable at the database level.
+    Coverage: accounting.application 86%, accounting.domain 98%, accounting.persistence 91%, accounting.web 94%.
 
-**Risks:** the event payloads may lack data. Mitigation: additive payload changes with the publisher's contract tests updated, and an ADR if any change is semantic.
+**Exit criteria (met):**
+
+- Random operational sequences always yield a balanced trial balance, AR = Σ open receivables, AP = Σ open payables and inventory account = valuation (`OperationalSequencePropertyTest`, seeded random sequences).
+- Posting during a concurrent period close is safe (`AccountingConcurrencyIntegrationTest`).
+- Posted entries are provably immutable at the database level (`LedgerIntegrityIntegrationTest`).
+
+**Moved to later phases** (ADR-038):
+
+| Item (planned for Phase 8) | Moved to | First consumer |
+|---|---|---|
+| Event Publication Registry, `processed_events` | Phase 9 | The first asynchronous listener (payslip PDF and e-mail) |
+| Document rendering and notification pipeline: invoice, quotation, PO and payslip PDFs, e-mail sending, the bank-detail change notification | Phase 9 | Payslips |
+| S3 file port with MinIO; CSV import framework with partner and opening-stock import | Phase 9 | Payslip PDFs, employee documents, imports |
+| Report file exports (CSV, XLSX, PDF) | Phase 10 | The async export framework |
+| Events `accounting.period.closed` / `reopened`, `accounting.payment.posted` | Phase 10 | Reporting projections and notifications |
+| PAY_COMPONENT-scoped mappings | Phase 9 | Payroll postings |
+| Batch supplier payment proposal (optional) | Later | — |
+| Org guard on changing the fiscal start month once fiscal years exist | Phase 9 | With the Org ↔ Accounting port |
 
 ### Phase 9 — HR and Payroll
 

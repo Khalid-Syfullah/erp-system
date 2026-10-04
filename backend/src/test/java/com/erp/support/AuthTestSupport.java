@@ -14,15 +14,19 @@ import com.erp.auth.application.Passwords;
 import com.erp.auth.application.PermissionResolver;
 import com.erp.auth.domain.SecureTokens;
 import com.erp.auth.domain.Totp;
+import com.erp.org.events.CompanyCreated;
 import com.erp.platform.context.CurrentContext;
 import com.erp.platform.context.RequestContext;
 import com.erp.platform.crypto.FieldEncryptor;
+import com.erp.platform.events.DomainEvents;
 import jakarta.servlet.http.Cookie;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 import org.jooq.DSLContext;
 import org.springframework.boot.test.context.TestComponent;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -55,6 +59,7 @@ public class AuthTestSupport {
     private final PermissionResolver permissionResolver;
     private final TransactionTemplate tx;
     private final MockMvc mvc;
+    private final ApplicationEventPublisher events;
 
     public AuthTestSupport(
             DSLContext dsl,
@@ -62,7 +67,9 @@ public class AuthTestSupport {
             FieldEncryptor encryptor,
             PermissionResolver permissionResolver,
             TransactionTemplate tx,
-            MockMvc mvc) {
+            MockMvc mvc,
+            ApplicationEventPublisher events) {
+        this.events = events;
         this.dsl = dsl;
         this.passwords = passwords;
         this.encryptor = encryptor;
@@ -115,8 +122,23 @@ public class AuthTestSupport {
         return user.withTotp(secret);
     }
 
+    /**
+     * A new company, set up as the API would set it up: {@code org.company.created} is published in
+     * the creating transaction, so Accounting seeds its chart of accounts and fiscal year (ADR-038).
+     */
     public UUID company() {
-        return TestCompanies.create(dsl);
+        return tx.execute(status -> {
+            UUID id = TestCompanies.create(dsl);
+            events.publishEvent(new CompanyCreated(
+                    DomainEvents.metadata(CompanyCreated.TYPE, CompanyCreated.SCHEMA_VERSION, id, Clock.systemUTC()),
+                    id,
+                    "T",
+                    "USD",
+                    "US",
+                    1,
+                    "America/New_York"));
+            return id;
+        });
     }
 
     public UUID branch(UUID companyId, String code) {

@@ -222,7 +222,8 @@ class ProcureToPayIntegrationTest extends IntegrationTest {
                     .satisfies(t -> assertThat(t.taxBase()).isEqualByComparingTo("5.00"));
         });
         mvc.perform(get(p.path("/supplier-bills/" + billId + "/settlement")).cookie(p.session()))
-                .andExpect(jsonPath("$.status").value("UNKNOWN"));
+                .andExpect(jsonPath("$.status").value("OPEN"))
+                .andExpect(jsonPath("$.openAmount").value("55.0000"));
 
         // Two units go back to the supplier and are credited by a debit note.
         UUID secondLine = proc.receiptLines(p, second).getFirst();
