@@ -2,3 +2,12 @@
 # (jOOQ code generation needs Docker, so the jar is built outside `docker build`).
 *
 !backend/build/libs/erp-backend.jar
+
+# The web image (infra/docker/frontend.Dockerfile) builds the SPA from its sources.
+!frontend/
+frontend/node_modules
+frontend/dist
+frontend/test-results
+frontend/playwright-report
+frontend/e2e/.state
+!infra/docker/nginx/spa.conf

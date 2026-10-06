@@ -83,9 +83,9 @@ The repository was empty at Phase 1, so this stack was chosen from scratch. The 
 | Build | Gradle (Kotlin DSL) with a version catalog | |
 | Backend testing | JUnit 5, AssertJ, Testcontainers (PostgreSQL), Spring Modulith `@ApplicationModuleTest`, ArchUnit, jqwik (property-based), REST Assured | |
 | Frontend | **React 19 + TypeScript (strict) + Vite** | |
-| Frontend libraries | TanStack Router, TanStack Query, TanStack Table, react-hook-form + zod, Tailwind CSS + shadcn/ui (Radix), `openapi-typescript` + `openapi-fetch`, decimal.js (display arithmetic only) | |
-| Frontend testing | Vitest + Testing Library; Playwright (end-to-end) | |
-| Packaging | OCI images (backend: Spring Boot layered jar on a distroless/temurin JRE; frontend: static assets served by nginx or a CDN) | |
+| Frontend libraries | TanStack Router, TanStack Query, react-hook-form + zod, Tailwind CSS + shadcn/ui (Radix), `openapi-typescript` with a thin typed client (`frontend/src/api/client.ts`: CSRF, If-Match, Idempotency-Key, problems, step-up; ADR-041), decimal.js (display arithmetic only) | |
+| Frontend testing | Vitest + Testing Library; Playwright (end-to-end, seeded through the API) + axe (WCAG 2.2 AA) | |
+| Packaging | OCI images (backend: Spring Boot layered jar on a distroless/temurin JRE; frontend: static assets served by unprivileged nginx with the SPA security headers, `/api` proxied to the backend — `infra/docker/frontend.Dockerfile`) | |
 | Local development | Docker Compose: postgres, minio, mailpit, otel-collector (optional) | |
 | CI | GitHub Actions (assumed; see Open Questions) | Build, test, module verification, SAST, dependency scanning, image build. |
 

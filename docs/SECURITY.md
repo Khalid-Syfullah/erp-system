@@ -395,6 +395,8 @@ Cross-Origin-Opener-Policy: same-origin
 
 Hashed static assets are cached as immutable. `index.html` is served with `no-cache`.
 
+*Status (Phase 11):* the headers are defined once in `frontend/security-headers.mjs`; `vite preview` and the web image (unprivileged nginx, `infra/docker/nginx/spa.conf`, which sets them on the application only, so the proxied API keeps its own) send them; `frontend/tests/security-headers.test.ts` checks the nginx configuration and `frontend/e2e/security-headers.spec.ts` the served headers and the application under the CSP (ADR-041). The SPA has no inline scripts; `dangerouslySetInnerHTML` is banned by lint.
+
 ### 10.2 CORS
 
 The SPA and API are served from the **same origin**, so CORS is **disabled**: no `Access-Control-Allow-Origin`. If a separate origin is ever required, it needs an explicit allowlist of exact origins, `Allow-Credentials` only for those origins, and an ADR.
@@ -450,5 +452,5 @@ The SPA and API are served from the **same origin**, so CORS is **disabled**: no
 | SoD rules | Each module phase |
 | Sensitive field masking and reveal audit | Phases 6 (partners) and 9 (HR: date of birth, national ID, bank accounts, documents) |
 | Rate limits | Phase 3 |
-| Security headers | Phase 2 (API), Phase 11 (SPA) |
+| Security headers | Phase 2 (API), Phase 11 (SPA: header source, nginx check, served-header and CSP end-to-end test) |
 | ZAP baseline, dependency and container scans, pentest | Phase 12 |

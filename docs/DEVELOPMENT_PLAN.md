@@ -36,8 +36,8 @@ flowchart LR
 | 7 | Sales | 5, 6 (patterns) | L (done) |
 | 8 | Accounting | 4–7 (events) | XL |
 | 9 | HR and Payroll | 3, 4, 8 | L |
-| 10 | Reporting and analytics | 5–9 | M |
-| 11 | Frontend (web SPA) | 3–10 (stable APIs) | XL |
+| 10 | Reporting and analytics | 5–9 | M (done) |
+| 11 | Frontend (web SPA) | 3–10 (stable APIs) | XL (done) |
 | 12 | Production-readiness audit | all | L |
 
 ## 2. Why this order
@@ -695,7 +695,7 @@ A phase is done only when **all** of the following hold:
 | Reorder points (a real low-stock KPI) | Later | Replenishment |
 | Events `accounting.period.closed` / `reopened`, `accounting.payment.posted` (planned for Phase 10) | Later | Notifications; Reporting reads the ledger through its views and needs no projections |
 
-### Phase 11 — Frontend (web SPA)
+### Phase 11 — Frontend (web SPA) ✅
 
 **Prerequisites:** stable APIs from Phases 3–10.
 
@@ -725,6 +725,30 @@ A phase is done only when **all** of the following hold:
 - The SPA security headers and CSP are verified.
 
 **Optional parallelization:** an app shell (login, layout, company switcher) may start after Phase 4, if a separate frontend track is staffed.
+
+**Status (delivered, ADR-041):**
+
+1. **Foundation:** Vite 8, React 19, TypeScript 5.9 strict; TanStack Router (file routes, code splitting) and Query; types generated from the OpenAPI document (`npm run api:generate` / `api:check`) and a thin typed client with the CSRF bootstrap, `If-Match`, `Idempotency-Key` per user intent, problem documents, step-up re-authentication with one retry, session expiry and forced MFA enrollment; sign-in with TOTP or recovery codes, password reset and invitation acceptance (tokens from the URL fragment); company switcher (last company remembered); role- and state-aware navigation and actions (UX only); server field errors attached to inputs by JSON pointer; a typed English catalogue; decimal strings formatted with `Intl` and summed with decimal.js; light and dark themes.
+2. **Design system:** Tailwind 4 and shadcn/ui; data table (server pagination with cursors, allowlisted filters and sort, debounced search, arrow-key row navigation, loading, empty and error states, polling); entity pickers and names for referenced records; form fields, date picker, decimal and currency inputs; modal, drawer, confirmation and form dialogs; status badge; toasts; master-data and settings page patterns; the document page (state actions with confirmation, reason and idempotency, lines, server totals and taxes) with draft line editors; audit history drawer; attachments panel.
+3. **Screens:** dashboard and role dashboards; organization (company, numbering, branches, departments, tax codes, payment terms, exchange rates, partners with addresses, contacts, masked bank accounts and profiles, groups); HR (employees with assignments, compensation, bank accounts, documents, attendance, reveal, termination and user link; positions, department heads, organization on a date with headcount, leave requests, balances, ledger, adjustments and accruals, leave types, holidays, attendance, settings); self-service (profile, leave, attendance with clock-in/out, payslips, team approvals); inventory (products, variants, unit conversions, categories, attributes, warehouses and locations, stock by warehouse and location, ledger, valuation, movements with post, cancel, reverse and transfer receipt, counts, reason codes, settings); procurement (requisitions with conversion, purchase orders with approval, goods receipts, returns, supplier bills with the 3-way match and override, settings); sales (customers, price lists, quotations, orders with price preview and the credit check with override, deliveries, returns, invoices and credit notes, settings); accounting (chart of accounts, mappings, journals, fiscal years and periods with close, journal entries, receivables and payables with netting, payments with allocation and void, expenses, bank accounts with reconciliation marks, settings); payroll (components, structures, schedules and periods, inputs, runs with calculation, approval, posting, payment and the bank file, payslips); report centre (catalogue, generated parameter forms, server-sorted pages with totals, a chart, exports, saved reports, Accounting's statements); administration (company users and roles, audit log; system users, roles and permissions, service accounts and tokens, companies, global audit log); my account (profile, password, MFA, sessions, API tokens). Goods receipts, deliveries and counts have touch-friendly tablet layouts.
+4. **Backend change:** unique OpenAPI schema names (`OpenApiSchemaNames`, `OpenApiSchemaNamesTest`): same-named request and response records no longer collapse into one schema.
+5. **Delivery:** the web image (`infra/docker/frontend.Dockerfile`, unprivileged nginx with `infra/docker/nginx/spa.conf`, compose service `web`); the SPA security headers in `frontend/security-headers.mjs` for `vite preview` and nginx.
+6. **Tests:** 26 Vitest tests (client, list queries, formatting, data table, server errors, dialogs, badges, the header configuration); Playwright: procure-to-pay, order-to-cash, payment allocation, period close, payroll run, leave request, the report centre, a tablet stock count, the security headers and CSP, and a smoke pass that opens every page of each seeded user's navigation, every detail tab and the first record of every document list, failing on API errors, console errors and serious axe violations. The seed (`e2e/support/seed.ts`) builds the demo company through the API.
+
+**Exit criteria (met):**
+
+- The Playwright suite is green against the seeded local stack (14 tests; the 2 header tests run against a production build and pass on `vite preview` and on the web image).
+- Axe reports no serious or critical violations on any page reachable by the seeded users (WCAG 2.0/2.1/2.2 A and AA rules).
+- The SPA security headers and CSP are verified on the served production build (`e2e/security-headers.spec.ts`; the application runs without CSP violations) and the nginx configuration is checked against the header source (`tests/security-headers.test.ts`).
+
+**Moved to later phases** (ADR-041):
+
+| Item | Moved to | First consumer |
+|---|---|---|
+| Document attachments and internal notes (PRODUCT_SPEC.md G-8; API.md §16 endpoints) | Phase 12 backlog | Supplier bills and invoices with scans |
+| CSV export of any list (G-18) | Later (reports export today) | Audit requests |
+| Server-sent job updates (polling is used) | Later | Payroll calculation, exports |
+| A second locale | Later | International rollout |
 
 ### Phase 12 — Production-readiness audit
 

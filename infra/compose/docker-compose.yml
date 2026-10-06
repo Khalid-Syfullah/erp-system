@@ -105,6 +105,21 @@ services:
     tmpfs: [/tmp]
     restart: unless-stopped
 
+  # The web application: the SPA and the API on one origin (http://localhost:8088).
+  web:
+    profiles: ["app"]
+    build:
+      context: ../..
+      dockerfile: infra/docker/frontend.Dockerfile
+    image: erp-web:local
+    ports:
+      - "127.0.0.1:8088:8080"
+    depends_on:
+      - app
+    read_only: true
+    tmpfs: [/tmp]
+    restart: unless-stopped
+
   bootstrap-admin:
     profiles: ["app"]
     image: erp-backend:local

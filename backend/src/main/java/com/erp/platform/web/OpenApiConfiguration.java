@@ -3,6 +3,7 @@ package com.erp.platform.web;
 import com.erp.platform.security.AuthenticatedEndpoint;
 import com.erp.platform.security.PublicEndpoint;
 import com.erp.platform.security.RequiresPermission;
+import io.swagger.v3.core.converter.ModelConverter;
 import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.Operation;
@@ -18,6 +19,7 @@ import io.swagger.v3.oas.models.responses.ApiResponses;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
 import java.lang.annotation.Annotation;
+import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
@@ -25,11 +27,15 @@ import java.util.Map;
 import org.jspecify.annotations.Nullable;
 import org.springdoc.core.customizers.OperationCustomizer;
 import org.springdoc.core.utils.SpringDocUtils;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.AnnotatedElementUtils;
+import org.springframework.util.function.SingletonSupplier;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.method.HandlerMethod;
+import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
 /**
  * The OpenAPI 3.1 document (DEVELOPMENT_PLAN.md §3, ADR-035). Every operation carries
@@ -81,6 +87,23 @@ public class OpenApiConfiguration {
                                         .scheme("bearer")
                                         .description("Personal or service access token (erp_pat_…)"))
                         .addSchemas(PROBLEM, problemSchema()));
+    }
+
+    /** Unique schema names for same-named request and response records (OpenApiSchemaNames). */
+    @Bean
+    ModelConverter uniqueSchemaNames(
+            @Qualifier("requestMappingHandlerMapping") ObjectProvider<RequestMappingHandlerMapping> handlerMapping) {
+        return new OpenApiSchemaNames.Converter(SingletonSupplier.of(() -> {
+            List<Method> handlers = new ArrayList<>();
+            handlerMapping.getObject().getHandlerMethods().forEach((info, handler) -> {
+                if (handler.getBeanType().getName().startsWith("com.erp.")
+                        && info.getPatternValues().stream()
+                                .anyMatch(p -> p.startsWith("/api/") && !p.startsWith("/api/v1/_test/"))) {
+                    handlers.add(handler.getMethod());
+                }
+            });
+            return OpenApiSchemaNames.qualifiedNames(OpenApiSchemaNames.reachableTypes(handlers));
+        }));
     }
 
     @Bean
