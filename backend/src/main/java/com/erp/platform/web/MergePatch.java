@@ -5,7 +5,9 @@ import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
@@ -132,6 +134,33 @@ public final class MergePatch {
             return Member.absent();
         }
         return new Member<>(true, node.booleanValue());
+    }
+
+    /** An object member of string values (e.g. report parameters); {@code null} clears it to empty. */
+    public Member<Map<String, String>> stringMap(String name, int maxEntries) {
+        if (!document.has(name)) {
+            return Member.absent();
+        }
+        JsonNode node = document.get(name);
+        if (node.isNull()) {
+            return new Member<>(true, Map.of());
+        }
+        if (!node.isObject() || node.size() > maxEntries) {
+            violations.add(FieldViolation.atPointer(
+                    "/" + name, "INVALID_VALUE", "must be an object of at most " + maxEntries + " string values"));
+            return Member.absent();
+        }
+        Map<String, String> values = new LinkedHashMap<>();
+        for (Iterator<String> names = node.propertyNames().iterator(); names.hasNext(); ) {
+            String key = names.next();
+            JsonNode value = node.get(key);
+            if (!value.isString()) {
+                violations.add(FieldViolation.atPointer("/" + name + "/" + key, "INVALID_VALUE", "must be a string"));
+            } else {
+                values.put(key, value.stringValue());
+            }
+        }
+        return new Member<>(true, values);
     }
 
     /** A reference member: a UUID string, or {@code null} to clear an optional reference. */

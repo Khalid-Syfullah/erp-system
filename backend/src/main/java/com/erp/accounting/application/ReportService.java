@@ -1,5 +1,7 @@
 package com.erp.accounting.application;
 
+import com.erp.accounting.api.AccountingReports;
+import com.erp.accounting.api.FinancialReports;
 import com.erp.accounting.domain.AccountType;
 import com.erp.accounting.domain.Ageing;
 import com.erp.accounting.persistence.AccountRepository;
@@ -32,7 +34,7 @@ import org.springframework.transaction.annotation.Transactional;
  * (CSV, XLSX, PDF) come with the document rendering pipeline (ADR-038).
  */
 @Service
-public class ReportService {
+public class ReportService implements FinancialReports {
 
     static final int MAX_DAYS = 3660;
 
@@ -65,6 +67,7 @@ public class ReportService {
     }
 
     /** Opening balance, debits, credits and closing balance per account; zero rows only if asked. */
+    @Override
     @Transactional(readOnly = true)
     public AccountingReports.TrialBalance trialBalance(
             LocalDate from, LocalDate to, @Nullable UUID branchId, boolean includeZero) {
@@ -101,6 +104,7 @@ public class ReportService {
     }
 
     /** The posted lines of an account with a running balance. */
+    @Override
     @Transactional(readOnly = true)
     public AccountingReports.GeneralLedger generalLedger(UUID accountId, LocalDate from, LocalDate to) {
         range(from, to);
@@ -120,7 +124,7 @@ public class ReportService {
 
     /** Posted entries of a range with their lines (at most 5 000 entries). */
     @Transactional(readOnly = true)
-    public AccountingReports.JournalReport journal(LocalDate from, LocalDate to, @Nullable UUID journalId) {
+    public AccountingViews.JournalReport journal(LocalDate from, LocalDate to, @Nullable UUID journalId) {
         range(from, to);
         UUID companyId = context.companyId();
         List<AccountingViews.JournalEntryDetail> details = new ArrayList<>();
@@ -128,10 +132,11 @@ public class ReportService {
             details.add(new AccountingViews.JournalEntryDetail(
                     entries.find(companyId, id).orElseThrow(), entries.lines(companyId, id)));
         }
-        return new AccountingReports.JournalReport(from, to, details);
+        return new AccountingViews.JournalReport(from, to, details);
     }
 
     /** Revenue and expenses of a range (without year-end closing entries), optionally against another. */
+    @Override
     @Transactional(readOnly = true)
     public AccountingReports.ProfitAndLoss profitAndLoss(
             LocalDate from,
@@ -192,6 +197,7 @@ public class ReportService {
      * Assets, liabilities and equity as of a date, with the result not yet closed into retained
      * earnings shown as current earnings (ACC-7: assets = liabilities + equity + current earnings).
      */
+    @Override
     @Transactional(readOnly = true)
     public AccountingReports.BalanceSheet balanceSheet(LocalDate asOf) {
         UUID companyId = context.companyId();
@@ -231,6 +237,7 @@ public class ReportService {
     }
 
     /** Open items by partner and days past due as of a date (document currency converted at the item rate). */
+    @Override
     @Transactional(readOnly = true)
     public AccountingReports.Ageing ageing(String kind, LocalDate asOf) {
         UUID companyId = context.companyId();
@@ -333,18 +340,19 @@ public class ReportService {
      * The cash and bank book: the bank account's posted lines with a running balance in the
      * account's currency and their reconciliation marks ("bank transactions").
      */
+    @Override
     @Transactional(readOnly = true)
     public AccountingReports.CashBook cashBook(UUID bankAccountId, LocalDate from, LocalDate to) {
         range(from, to);
         UUID companyId = context.companyId();
-        AccountingViews.BankAccount bank =
+        AccountingReports.BankAccount bank =
                 bankAccounts.find(companyId, bankAccountId).orElseThrow(ApiException::notFound);
         BigDecimal opening = ledger.currencyBalanceBefore(companyId, bank.accountId(), from);
         BigDecimal balance = opening;
-        List<AccountingViews.BankTransaction> transactions = new ArrayList<>();
+        List<AccountingReports.BankTransaction> transactions = new ArrayList<>();
         for (LedgerRepository.LedgerLine line : ledger.lines(companyId, List.of(bank.accountId()), from, to, null)) {
             balance = balance.add(line.amountCurrency());
-            transactions.add(new AccountingViews.BankTransaction(
+            transactions.add(new AccountingReports.BankTransaction(
                     line.lineId(),
                     line.entryId(),
                     line.entryNumber(),

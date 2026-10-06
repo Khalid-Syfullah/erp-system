@@ -182,7 +182,7 @@ Rules:
 | **Reporting** | `reporting` / `reporting` | report definitions, saved report parameters, export jobs, reporting views (read-only) | Cross-module operational reports, dashboards and exports. It owns **no transactional data**. |
 | **Administration** | `admin` / `admin` | audit log, system settings, data retention policies, feature flags | Audit storage and queries, global settings, admin tooling (user and role administration UI is backed by the Auth facade). |
 
-Financial statements (trial balance, P&L, balance sheet, GL detail, AR/AP aging) are owned by **Accounting**, because it is the domain authority for them. Reporting may embed them through the Accounting facade, but never re-implements them.
+Financial statements (trial balance, P&L, balance sheet, GL detail, AR/AP aging, cash book) are owned by **Accounting**, because it is the domain authority for them. Reporting exports them through Accounting's `FinancialReports` API (`accounting :: api`), but never re-implements them (ADR-040). Every other report reads the owning modules' `v_rpt_*` views, in which each module encodes its own rules (signed credit notes, GRNI per receipt line, the effective type of a reversal, employment on a date).
 
 ### 4.2 Ownership rules for cross-cutting entities
 
@@ -236,7 +236,7 @@ The kernel is a library-like shared module that every module may use. It must st
 | **Synchronous in-transaction event listener** (`@EventListener`) | A downstream module must react **atomically** to a fact published by an upstream module, and the upstream module must not know about it. | Same transaction. A listener exception rolls back the publisher. | Accounting creates a journal entry when `SalesInvoicePosted` is published. |
 | **Asynchronous reliable event listener** (`@ApplicationModuleListener`, backed by the Event Publication Registry) | Side effects that may happen **after** commit and must not block or roll back the business transaction. | New transaction after commit; at-least-once; retried; the consumer must be idempotent. | Email notifications, search/reporting projections, cache invalidation, webhooks. |
 | **Port (dependency inversion)** | An upstream module needs data that a downstream module owns, and a direct dependency would create a cycle. | Same transaction. | Sales defines `CustomerCreditExposurePort`; Accounting implements it. Org defines `OrganizationUsage` and `TaxCodeUsage`; HR (and later Inventory and the document modules) implement them (ADR-034). |
-| **Read-only reporting views** | Reporting needs cross-module joins. | Read-only; uses a reporting DB role. | `inventory.v_stock_on_hand` consumed by Reporting. |
+| **Read-only reporting views** | Reporting needs cross-module joins. | Read-only, `security_invoker`; read through Reporting's own connection pool as `erp_reporting` (RLS applies; optionally a replica). | `inventory.v_rpt_stock_on_hand` consumed by Reporting. |
 
 **Hard rules**
 
@@ -306,7 +306,7 @@ Allowed dependencies in table form. This table is the source of truth for `allow
 | sales | org, partners, inventory |
 | payroll | org, hr (`hr::api`, `hr::events`) |
 | accounting | org (incl. `org::events`), partners, inventory::{api, events}, procurement::{api, events}, sales::{api, events}, payroll::{api, events} (`procurement`/`sales` `api` is used only to **implement ports** defined by those modules; `inventory::api` for category ancestry, reason codes and the valuation total, ADR-038; `payroll::api` to validate pay-component mapping scopes, ADR-039) |
-| reporting | org, accounting::api, plus reporting views of all modules |
+| reporting | org::api, accounting::api, plus the `v_rpt_*` views of all modules (only the generated `VRpt*` classes, enforced by `ArchitectureTests`) |
 | admin | org, auth |
 
 Layers:
@@ -533,7 +533,7 @@ Event classes live in `<module>.events` as Java records. The JSON shape of each 
 | `erp-backend` (API mode) | 2+ (horizontal) | Stateless. Sessions live in PostgreSQL. Runs behind the load balancer. |
 | `erp-backend` (worker mode, `ERP_JOBS_ENABLED=true`) | 1–2 | The same image. Runs db-scheduler jobs and resubmits event publications. It is kept out of the load balancer's API target group (the flag only enables the scheduler; the HTTP port still listens). db-scheduler's row locking makes concurrent workers safe. |
 | `erp-frontend` | Static assets on a CDN or nginx | Same origin as the API (`/` → frontend, `/api` → backend) so that cookies can be `SameSite=Strict`/`Lax` and CORS is not needed. |
-| PostgreSQL 18 | Managed (e.g. AWS RDS/Aurora, GCP Cloud SQL) with Multi-AZ | Point-in-time recovery: 35-day retention, daily snapshots, monthly restore drill. A read replica is optional for reporting (Phase 10+). |
+| PostgreSQL 18 | Managed (e.g. AWS RDS/Aurora, GCP Cloud SQL) with Multi-AZ | Point-in-time recovery: 35-day retention, daily snapshots, monthly restore drill. A read replica is optional for reporting: `erp.reporting.datasource.url` points Reporting's pool at it (Phase 10). |
 | Object storage | S3 (versioning enabled, SSE-KMS) | |
 | Email | SMTP relay (SES, Postmark, …) | |
 | Telemetry | OTLP collector → the organization's observability backend | |

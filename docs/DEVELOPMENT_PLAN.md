@@ -655,23 +655,45 @@ A phase is done only when **all** of the following hold:
 | FINAL_SETTLEMENT runs, bank-specific payment files, payroll in foreign currencies | Later | — |
 | Org guard on changing the fiscal start month once fiscal years exist | Later | With the Org ↔ Accounting port |
 
-### Phase 10 — Reporting and analytics
+### Phase 10 — Reporting and analytics ✅
 
 **Prerequisites:** Phases 5–9.
 
-**Deliverables:**
+**Scope** (ADR-040): the Reporting brief (sales, procurement, inventory, accounting and HR reports with filters, authorization, exports, performance) on the plan's deliverables. Every figure comes from its owning module: operational reports from the modules' `v_rpt_*` views, the financial statements from Accounting. No data warehouse, materialized views or caches.
 
-- Carried over from Phases 5 and 6 (ADR-035, ADR-036): the inventory and procurement `v_rpt_*` views (DATABASE.md §11).
-- `reporting` schema, the report catalogue and permission mapping, the reporting read-only DataSource (`erp_reporting` role, optional replica).
-- All reports in PRODUCT_SPEC.md §13, including gross margin and the GRNI reconciliation.
-- **The async export framework:** CSV, XLSX and PDF; CSV-injection-safe; size limits; file expiry.
-- Saved reports, role dashboards and KPI endpoints.
-- Report performance budgets are verified with seeded volume data at 1/5 of the target volume.
+**Delivered:**
 
-**Exit criteria:**
+1. **Reporting views:** security-invoker `v_rpt_*` views in every module (DATABASE.md §11), with indexes for the report paths; readable only by `erp_reporting` (column grants on personal and banking tables), never by `erp_app`.
+2. **The reporting role:** Reporting's own read-only connection pool as `erp_reporting` (optionally a replica), binding the company like the application's transactions (RLS), READ ONLY, REPEATABLE READ, statement timeouts; `ArchitectureTests` limit other schemas to their `VRpt*` classes.
+3. **Accounting API:** `FinancialReports` and the `AccountingReports` records in `accounting.api`; Reporting exports the statements without recomputing them.
+4. **Catalogue:** 36 reports (`ReportCatalog`, `reporting.report_definitions`) with typed parameters, columns, default order, keys and permissions; `GET {c}/reports` lists what the caller may run, Accounting's statements at their own paths.
+5. **Reports:** sales (summary, by customer, product, branch, period, invoice status, payment status, gross margin, order backlog), procurement (purchases, supplier analysis, purchase orders, receiving, GRNI, outstanding bills), inventory (stock on hand and valuation now or as of a date, movement summary, slow-moving, warehouse summary, adjustments, transaction history), accounting (the seven statements, cash position, expenses) and HR (headcount, turnover, attendance, leave, payroll summary); filters by date range, branch, department, warehouse, location, customer, supplier, product, category, account and status; validated parameters; keyset pages with signed cursors and totals; branch scope; rate limit.
+6. **Exports:** asynchronous jobs (`reporting-exports` worker, `reporting-export-expiry`), streamed CSV (formula-safe), XLSX (fastexcel) and PDF (OpenPDF) with totals, row and size limits, 7-day expiry, owner-only download, hourly budget, audit; streaming `FileService.putGenerated` / `open`.
+7. **Saved reports and dashboards:** saved parameters (private, shared with `reporting.saved_report.share`, owner-only changes); five role dashboards with seven permission-gated KPI widgets.
+8. **Configuration:** `erp.reporting.*` (`ERP_DB_REPORTING_*`; the password is required in production), the role's password in Docker Compose and the tests; export and share permissions granted to the manager and finance roles (SECURITY.md §4.3).
+9. **Tests:** 1533 tests in 120 classes (the full build takes about 5 minutes, the volume test about 100 s of it). New in this phase:
+    - `ReportCatalogIntegrationTest` (catalogue = seed = SECURITY.md; every view report produces its columns and runs for every grouping and filter; views security-invoker and readable only by `erp_reporting`, which writes nothing, reads no personal data and sees one company)
+    - `SalesReportsIntegrationTest`, `ProcurementReportsIntegrationTest`, `InventoryReportsIntegrationTest`, `AccountingReportsIntegrationTest`, `HrReportsIntegrationTest`: calculations reconciled with the general ledger (revenue, output tax, COGS, inventory, GRNI through returns and debit notes, adjustments, expenses, bank), with Accounting's open items and statements and with HR's and Payroll's figures; filters, inclusive date boundaries, as-of figures, pagination and cursors, parameter validation, permissions, branch scope, company isolation
+    - `ReportExportIntegrationTest`, `ExportLimitsIntegrationTest` (file contents equal the report, formula neutralisation, XLSX and PDF readability and totals, every statement exported from Accounting's figures, idempotency, permissions, ownership, branch scope in the worker, rate limit, expiry, interrupted and failed jobs, row and size limits)
+    - `SavedReportAndDashboardIntegrationTest`, `ReportingDomainTest`
+    - `ReportingVolumeIntegrationTest` (below)
 
-- Standard reports return in under 2 s at p95 on the volume dataset.
-- Every report reconciles with its source: stock valuation = GL inventory, and GRNI report = GRNI account.
+    Coverage: reporting.application 96%, reporting.domain 100%, reporting.persistence 100%, reporting.web 100%, accounting.api 99%, platform.files 80%.
+
+**Exit criteria (met):**
+
+- Standard reports return in under 2 s at p95 on the volume dataset: `ReportingVolumeIntegrationTest` seeds 1/5 of the target volume (2 M stock ledger entries, 2 M posted journal lines, 200 k invoice lines, purchase documents, 2,000 employees with attendance and leave) and runs every report, Accounting's statements and the dashboards for the current month — one warm-up and three timed runs each; the slowest runs were about 0.5 s (AR ageing, the year's sales by period, the stock movement summary, the as-of valuation), most under 100 ms; the month's stock ledger (43 k rows) exports as CSV in about a second. The bulk load (row triggers off) takes about a minute; the application role then posts the 200 k journal entries, so the database still checks each one.
+- Every report reconciles with its source: stock valuation = GL inventory (`InventoryReportsIntegrationTest`), GRNI report = GRNI account through bills, returns and debit notes (`ProcurementReportsIntegrationTest`); also sales = revenue and output tax, gross-margin COGS = the COGS account, adjustments = the adjustment expense, expenses = the income statement, cash position = trial balance and cash book, headcount = HR's headcount, payroll summary = the posted run.
+
+**Moved to later phases** (ADR-040):
+
+| Item | Moved to | First consumer |
+|---|---|---|
+| E-mail notification when an export is ready; scheduled report delivery | Later | The notification pipeline |
+| Consolidated multi-company reports | Later (SECURITY.md §4.4) | Group reporting |
+| GRNI and invoice payment status as of a past date | Later | Audit requests |
+| Reorder points (a real low-stock KPI) | Later | Replenishment |
+| Events `accounting.period.closed` / `reopened`, `accounting.payment.posted` (planned for Phase 10) | Later | Notifications; Reporting reads the ledger through its views and needs no projections |
 
 ### Phase 11 — Frontend (web SPA)
 

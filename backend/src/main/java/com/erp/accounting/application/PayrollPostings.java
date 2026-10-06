@@ -1,5 +1,6 @@
 package com.erp.accounting.application;
 
+import com.erp.accounting.api.AccountingReports;
 import com.erp.accounting.domain.MappingKey;
 import com.erp.accounting.domain.MappingKey.ScopeType;
 import com.erp.accounting.persistence.AccountRepository;
@@ -153,9 +154,9 @@ class PayrollPostings {
         }
         String base = context.profile().baseCurrency();
         requireBase(event.currencyCode(), base);
-        AccountingViews.BankAccount bank = bankAccounts
+        AccountingReports.BankAccount bank = bankAccounts
                 .forUse(companyId, event.bankAccountId())
-                .filter(AccountingViews.BankAccount::active)
+                .filter(AccountingReports.BankAccount::active)
                 .orElseThrow(() -> ApiException.validationFailed(
                         "The bank account is invalid.",
                         List.of(FieldViolation.atPointer(

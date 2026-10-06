@@ -122,7 +122,7 @@ Constraint names are used to map database errors to API error codes deterministi
 | `erp_owner` | no | Owns all schemas and objects. |
 | `erp_migrator` | yes | Member of `erp_owner`. Used only by the migration step in CI/CD. |
 | `erp_app` | yes | `USAGE` on schemas. `SELECT, INSERT, UPDATE, DELETE` on mutable tables. **`SELECT, INSERT` only** on append-only tables (`inventory.inventory_transactions`, `admin.audit_log`, `auth.login_attempts`). `UPDATE` on `accounting.journal_entries`/`journal_lines`, because drafts are mutable; posted rows are protected by triggers. **Not** an owner, so RLS applies. |
-| `erp_reporting` | yes | `SELECT` on `v_rpt_*` views and on tables explicitly granted for reporting. RLS applies. Used by Reporting through a separate read-only DataSource, optionally pointing at a replica. |
+| `erp_reporting` | yes | `SELECT` on the `v_rpt_*` views and on the columns behind them (security-invoker views check the invoker; personal and banking tables by column: no encrypted, contact or account-number columns). No write privilege anywhere. RLS applies. Used by Reporting through its own read-only connection pool (`erp.reporting.datasource.*`, optionally a replica; ADR-040). `erp_app` has no privileges on the views. |
 | `erp_support` | yes | Break-glass read-only access for operations, with no access to `*_encrypted` columns (column-level grants). Every use is logged by the database (`log_statement = 'all'` for this role). |
 
 ### 2.8 Deletion and archival policy
@@ -154,7 +154,7 @@ CREATE POLICY company_isolation ON <t>
 Migrations apply this with `SELECT platform.enable_company_rls('<schema>.<table>')`. `platform.current_company_id()` is a `STABLE` SQL function returning `nullif(current_setting('app.company_id', true), '')::uuid`. `RowLevelSecurityIntegrationTest` scans the catalogue and fails for any table owned by `erp_owner` that has a `company_id` column but no forced `company_isolation` policy (documented exemptions only).
 
 - `app.company_id` is set with `set_config(…, true)` (transaction-local) by `CompanyScopedTransactionManager` at the start of every transaction (ARCHITECTURE.md §6.3). If it is unset, the policy evaluates against NULL and **no rows are visible**: it fails closed.
-- **Global-access code paths**, such as a system admin's cross-company audit search or company-iterating jobs, either iterate companies and set the context per company, or set `app.global_access = 'on'`. Only specific tables have a policy that honors that flag: `admin.audit_log` (Phase 3), and later `platform.files` and `reporting.export_jobs`. `platform.global_access()` reads the flag. The audit-log policy is `USING (company_id = current_company_id() OR global_access())` and `WITH CHECK (company_id IS NULL OR company_id = current_company_id() OR global_access())`, because global events such as logins have no company. The flag is set by the transaction manager only for handlers annotated `@GlobalAccess`, after their permission check; an ArchUnit rule and `EndpointSecurityMatrixTest` require every `@GlobalAccess` handler to carry `@RequiresPermission` (ADR-032). Company-scoped tables without such a policy stay invisible even with the flag.
+- **Global-access code paths**, such as a system admin's cross-company audit search or company-iterating jobs, either iterate companies and set the context per company, or set `app.global_access = 'on'`. Only specific tables have a policy that honors that flag: `admin.audit_log` (Phase 3). `platform.files` and `reporting.export_jobs` have the standard policy: their jobs (payslip PDFs, exports and their expiry) iterate companies instead. `platform.global_access()` reads the flag. The audit-log policy is `USING (company_id = current_company_id() OR global_access())` and `WITH CHECK (company_id IS NULL OR company_id = current_company_id() OR global_access())`, because global events such as logins have no company. The flag is set by the transaction manager only for handlers annotated `@GlobalAccess`, after their permission check; an ArchUnit rule and `EndpointSecurityMatrixTest` require every `@GlobalAccess` handler to carry `@RequiresPermission` (ADR-032). Company-scoped tables without such a policy stay invisible even with the flag.
 - These tables are **not company-scoped** (no RLS): `org.companies`, `org.currencies`, `org.countries`, `auth.*` (except `role_assignments`, see below), `inventory.uom_categories`, `inventory.uoms`, and `admin.system_settings`. (`platform.document_sequences` and `platform.files` do have `company_id` and RLS).
 - `auth.role_assignments`, `auth.role_assignment_branches` and `auth.api_tokens` have `company_id` but **no RLS**, because a user's assignments and tokens across companies must be readable during authentication, before any company context exists. Access goes only through the Auth module, whose queries always filter by user or by the company in the request context. `RowLevelSecurityIntegrationTest` lists these exemptions explicitly.
 - Partitions of company-scoped partitioned tables (e.g. `admin.audit_log_202610`) have no privileges for `erp_app`; all access goes through the parent table and its policy.
@@ -1270,11 +1270,16 @@ payroll.payslip_lines (id, company_id, payslip_id ON DELETE CASCADE, component_i
 ### 5.11 `reporting` and `admin`
 
 ```sql
-reporting.report_definitions (code text PK, name, owner_module, permission_code text NOT NULL /* auth permission code, by value; validated at startup */, parameters_schema jsonb, is_async boolean)
-reporting.saved_reports (id, company_id C, user_id, report_code, name, parameters jsonb, is_shared boolean, + std)
-reporting.export_jobs (id, company_id C, user_id, report_code, parameters jsonb, format CHECK (IN ('CSV','XLSX','PDF')),
-  status CHECK (IN ('QUEUED','RUNNING','SUCCEEDED','FAILED','EXPIRED')), file_id NULL, row_count bigint NULL,
-  error_code NULL, requested_at, started_at, completed_at, expires_at)
+reporting.report_definitions (code text PK, name, owner_module CHECK (IN ('inventory','procurement','sales','accounting','hr','payroll')),
+  permission_codes text[] NOT NULL /* auth permission codes by value, all required; ReportCatalogIntegrationTest checks them */)
+  -- seeded by R__seed_reporting_report_definitions.sql from the code catalogue (ADR-040); erp_app has no DML
+reporting.saved_reports (id, company_id C, user_id → auth.users, report_code → report_definitions, name ≤ 100,
+  parameters jsonb object ≤ 4000 chars, is_shared boolean, + std, UNIQUE (company_id, user_id, name))
+reporting.export_jobs (id, company_id C, user_id → auth.users, report_code → report_definitions, parameters jsonb,
+  format CHECK (IN ('CSV','XLSX','PDF')), branch_scope uuid[] NULL /* the requester's scope, NULL = all */,
+  status CHECK (IN ('QUEUED','RUNNING','SUCCEEDED','FAILED','EXPIRED')), file_id → platform.files NULL, row_count bigint NULL,
+  error_code NULL /* required when FAILED */, requested_at, started_at, completed_at, expires_at /* required when SUCCEEDED */, version)
+  -- ix (company_id, user_id, requested_at DESC) for the hourly export budget; partial ix on pending and on expiring jobs
 
 admin.audit_log (   -- PARTITION BY RANGE (occurred_at); monthly UTC partitions, 12 months ahead, created by
                     -- admin.ensure_audit_partitions(months) (SECURITY DEFINER; migration + 6-hourly job)
@@ -1507,23 +1512,32 @@ Deadlock handling: the retry policy in ARCHITECTURE.md §6.2. `lock_timeout = '5
 
 ## 11. Reporting views (published contracts)
 
-Each module publishes read-only views prefixed `v_rpt_` in its own schema. They are granted to `erp_reporting`. Changing a view's columns is a breaking change, handled with a new view name and a deprecation period. The views are created together with their consumer, the reporting module, in Phase 10 (ADR-035), so their columns are fixed against real reports.
+Each module publishes read-only views prefixed `v_rpt_` in its own schema, over its own tables only (Reporting joins views of different modules). They are `security_invoker = true` views, so the querying role's privileges and RLS apply; they are granted to `erp_reporting` and to nobody else (ADR-040). Changing a view's columns is a breaking change, handled with a new view name and a deprecation period. They were created in Phase 10 together with their consumer (ADR-035), so their columns are fixed against real reports. The list extends the plan with the master-data views reports need for names and with the document grains of the operational reports.
 
 | View | Owner | Grain / columns |
 |---|---|---|
-| `inventory.v_rpt_stock_on_hand` | Inventory | company, warehouse, location, variant, sku, product, category, on_hand, reserved, available, uom |
-| `inventory.v_rpt_stock_valuation` | Inventory | company, variant, qty, total_value_base, avg_cost |
-| `inventory.v_rpt_stock_movements` | Inventory | ledger rows with movement type, document refs, qty, value |
-| `procurement.v_rpt_purchase_lines` | Procurement | PO lines with supplier, dates, qty ordered/received/billed, amounts |
-| `procurement.v_rpt_supplier_bills` | Procurement | posted bills/debit notes |
-| `sales.v_rpt_sales_lines` | Sales | posted invoice/credit note lines with customer, product, category, branch, net base (signed) |
-| `sales.v_rpt_order_backlog` | Sales | open order lines with undelivered/uninvoiced qty |
-| `accounting.v_rpt_gl_lines` | Accounting | posted lines with account, type, period, dimensions |
-| `accounting.v_rpt_open_items` | Accounting | open AR/AP with ageing bucket inputs |
-| `hr.v_rpt_headcount` | HR | active assignments by date range, branch, department, position |
-| `payroll.v_rpt_payroll_summary` | Payroll | posted runs by period, component, department (amounts; no per-employee detail unless permitted) |
+| `org.v_rpt_branches`, `org.v_rpt_departments` | Org | code, name, (parent, branch), active |
+| `partners.v_rpt_partners` | Partners | code, name, type, status, is_customer, is_supplier, groups (no contacts, tax numbers or bank data) |
+| `inventory.v_rpt_products` | Inventory | variant, sku, product, type, category (code, name, path), base unit |
+| `inventory.v_rpt_warehouses` | Inventory | warehouse, code, name, branch |
+| `inventory.v_rpt_stock_on_hand` | Inventory | location grain: company, warehouse, branch, location, variant, sku, product, category, uom, on_hand |
+| `inventory.v_rpt_warehouse_stock` | Inventory | warehouse grain: on_hand, reserved, available (reservations are kept per warehouse) |
+| `inventory.v_rpt_stock_valuation` | Inventory | company, variant, sku, product, category, qty, total_value_base, avg_cost (current moving average) |
+| `inventory.v_rpt_stock_movements` | Inventory | ledger rows with movement number and type, the *effective* type (a reversal's original type), reason, source document, warehouse and branch, location, variant and product, qty, unit cost, value. Its joins are `LEFT JOIN`s on unique keys, so unused joins are dropped |
+| `procurement.v_rpt_purchase_lines`, `procurement.v_rpt_purchase_orders` | Procurement | submitted orders (lines with qty ordered/received/returned/billed and amounts; headers with totals) |
+| `procurement.v_rpt_receipt_lines` | Procurement | posted receipt lines with order dates, value and counters, `unbilled_quantity_base` and `grni_value_base` (value − returned − (billed − credited)) |
+| `procurement.v_rpt_supplier_bills`, `procurement.v_rpt_supplier_bill_lines` | Procurement | posted bills/debit notes (headers and lines, base amounts signed: debit notes negative) |
+| `sales.v_rpt_sales_lines` | Sales | posted invoice/credit note lines with customer, variant, branch, department, quantity and net/tax base (signed: credit notes negative) |
+| `sales.v_rpt_invoices` | Sales | invoice and credit note headers in every status |
+| `sales.v_rpt_order_backlog` | Sales | lines of confirmed, partly or fully delivered orders with undelivered and delivered-but-uninvoiced quantities |
+| `accounting.v_rpt_accounts`, `accounting.v_rpt_bank_accounts` | Accounting | accounts (code, name, type, subtype); bank accounts (name, GL account, currency; no numbers) |
+| `accounting.v_rpt_gl_lines` | Accounting | posted lines with entry (number, type, source), account (code, name, type, subtype), debit, credit, `amount_base`, currency amount, partner, branch, department, tax code |
+| `accounting.v_rpt_open_items` | Accounting | AR/AP open items (current open amounts; ageing as of a date is Accounting's report) |
+| `hr.v_rpt_headcount` | HR | assignments with the employee's number, name, status, hire and termination dates, branch, department, position, employment type, FTE, effective range |
+| `hr.v_rpt_employees`, `hr.v_rpt_attendance`, `hr.v_rpt_leave` | HR | employee number and name; attendance days with status and minutes; leave requests with type, dates, days and status |
+| `payroll.v_rpt_payroll_summary` | Payroll | posted and paid runs aggregated per run, branch, department and component (amount, payslip count; no per-employee figures) |
 
-All views respect RLS, because they are `security_invoker = true` views.
+Indexes added for the report paths: posted invoices by date, invoice lines by invoice, posted receipts and bills by date, orders by date, posted journal lines by date, the stock ledger by (company, warehouse, variant, date) including quantity and type, leave requests by start date.
 
 ---
 

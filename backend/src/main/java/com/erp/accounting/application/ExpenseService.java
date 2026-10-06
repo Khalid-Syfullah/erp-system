@@ -1,5 +1,6 @@
 package com.erp.accounting.application;
 
+import com.erp.accounting.api.AccountingReports;
 import com.erp.accounting.domain.DocumentStatus;
 import com.erp.accounting.domain.MappingKey;
 import com.erp.accounting.domain.MappingKey.ScopeType;
@@ -207,7 +208,7 @@ public class ExpenseService {
         UUID companyId = context.companyId();
         AccountingViews.Expense expense = lock(id, ifMatch, DocumentStatus.Action.POST);
         List<AccountingViews.ExpenseLine> lines = expenses.lines(companyId, id);
-        AccountingViews.BankAccount bank = bankAccounts.forUse(expense.bankAccountId(), "/bankAccountId");
+        AccountingReports.BankAccount bank = bankAccounts.forUse(expense.bankAccountId(), "/bankAccountId");
         BigDecimal rate = context.exchangeRate(expense.currencyCode(), expense.accountingDate());
         var baseRounding = context.baseRounding();
         String currency = expense.currencyCode();
@@ -329,7 +330,7 @@ public class ExpenseService {
     private Draft draft(AccountingCommands.Expense command) {
         UUID companyId = context.companyId();
         List<FieldViolation> violations = new ArrayList<>();
-        AccountingViews.BankAccount bank = bankAccounts.forUse(command.bankAccountId(), "/bankAccountId");
+        AccountingReports.BankAccount bank = bankAccounts.forUse(command.bankAccountId(), "/bankAccountId");
         LocalDate expenseDate = command.expenseDate() != null ? command.expenseDate() : context.today();
         LocalDate accountingDate = command.accountingDate() != null ? command.accountingDate() : expenseDate;
         if (command.payeeName().isBlank()) {

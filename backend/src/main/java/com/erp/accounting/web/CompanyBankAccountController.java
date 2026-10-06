@@ -1,9 +1,9 @@
 package com.erp.accounting.web;
 
 import com.erp.accounting.AccountingPermissions;
+import com.erp.accounting.api.AccountingReports;
 import com.erp.accounting.application.AccountingCommands;
 import com.erp.accounting.application.AccountingListings;
-import com.erp.accounting.application.AccountingReports;
 import com.erp.accounting.application.CompanyBankAccountService;
 import com.erp.accounting.application.ReportService;
 import com.erp.platform.security.RequiresPermission;

@@ -121,6 +121,8 @@ public final class AccountingViews {
 
     public record JournalEntryDetail(JournalEntry entry, List<JournalLine> lines) {}
 
+    public record JournalReport(LocalDate from, LocalDate to, List<JournalEntryDetail> entries) {}
+
     public record OpenItem(
             UUID id,
             String kind,
@@ -168,20 +170,6 @@ public final class AccountingViews {
             return reversedAt == null;
         }
     }
-
-    public record BankAccount(
-            UUID id,
-            String name,
-            UUID accountId,
-            String currencyCode,
-            @Nullable String bankName,
-            @Nullable String accountNumberLast4,
-            boolean hasAccountNumber,
-            boolean hasIban,
-            boolean active,
-            OffsetDateTime createdAt,
-            OffsetDateTime updatedAt,
-            int version) {}
 
     public record RequestedAllocation(UUID openItemId, BigDecimal amount) {}
 
@@ -261,25 +249,4 @@ public final class AccountingViews {
     public record ExpenseDetail(Expense expense, List<ExpenseLine> lines) {}
 
     /** A posted line on a bank or cash account, with its reconciliation mark if any. */
-    public record BankTransaction(
-            UUID journalLineId,
-            UUID journalEntryId,
-            @Nullable String entryNumber,
-            LocalDate entryDate,
-            String description,
-            @Nullable String sourceModule,
-            @Nullable String sourceType,
-            @Nullable UUID sourceId,
-            @Nullable String sourceNumber,
-            BigDecimal debit,
-            BigDecimal credit,
-            BigDecimal amountCurrency,
-            BigDecimal runningBalance,
-            @Nullable String statementReference,
-            @Nullable LocalDate statementDate) {
-
-        public boolean reconciled() {
-            return statementReference != null;
-        }
-    }
 }

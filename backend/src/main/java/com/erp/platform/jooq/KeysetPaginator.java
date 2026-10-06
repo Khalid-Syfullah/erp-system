@@ -96,7 +96,7 @@ public class KeysetPaginator {
      * directions rule out a single row-value comparison.
      */
     @SuppressWarnings("unchecked")
-    static Condition seek(List<Field<?>> keys, List<Boolean> descending, List<@Nullable String> after) {
+    public static Condition seek(List<Field<?>> keys, List<Boolean> descending, List<@Nullable String> after) {
         List<Condition> alternatives = new ArrayList<>();
         for (int i = 0; i < keys.size(); i++) {
             List<Condition> conjunction = new ArrayList<>();

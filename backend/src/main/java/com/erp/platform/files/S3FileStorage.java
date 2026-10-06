@@ -1,6 +1,8 @@
 package com.erp.platform.files;
 
+import java.io.InputStream;
 import java.net.URI;
+import java.nio.file.Path;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.util.StringUtils;
@@ -63,6 +65,23 @@ final class S3FileStorage implements FileStorage, AutoCloseable {
                     }
                 },
                 RequestBody.fromBytes(content));
+    }
+
+    @Override
+    public void put(String key, Path content, String contentType) {
+        client.putObject(
+                b -> {
+                    b.bucket(bucket).key(key).contentType(contentType);
+                    if (encrypt) {
+                        b.serverSideEncryption(ServerSideEncryption.AWS_KMS);
+                    }
+                },
+                RequestBody.fromFile(content));
+    }
+
+    @Override
+    public InputStream open(String key) {
+        return client.getObject(b -> b.bucket(bucket).key(key));
     }
 
     @Override

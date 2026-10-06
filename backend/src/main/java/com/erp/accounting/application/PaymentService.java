@@ -1,5 +1,6 @@
 package com.erp.accounting.application;
 
+import com.erp.accounting.api.AccountingReports;
 import com.erp.accounting.domain.DocumentStatus;
 import com.erp.accounting.domain.MappingKey;
 import com.erp.accounting.domain.MappingKey.ScopeType;
@@ -190,7 +191,7 @@ public class PaymentService {
         boolean inbound = payment.inbound();
         UUID partnerId = Objects.requireNonNull(payment.partnerId());
         UUID group = partnerGroup(inbound, partnerId);
-        AccountingViews.BankAccount bank = bankAccounts.forUse(payment.bankAccountId(), "/bankAccountId");
+        AccountingReports.BankAccount bank = bankAccounts.forUse(payment.bankAccountId(), "/bankAccountId");
         if (!bank.currencyCode().equals(payment.currencyCode())) {
             throw ApiException.validationFailed(
                     "The payment currency differs from the bank account's.",
@@ -387,7 +388,7 @@ public class PaymentService {
             violations.add(FieldViolation.atPointer("/method", "INVALID_VALUE", "is not a payment method"));
         }
         partnerGroupOrViolation(inbound, command.partnerId(), violations);
-        AccountingViews.BankAccount bank = bankAccounts.forUse(command.bankAccountId(), "/bankAccountId");
+        AccountingReports.BankAccount bank = bankAccounts.forUse(command.bankAccountId(), "/bankAccountId");
         LocalDate date = command.paymentDate() != null ? command.paymentDate() : context.today();
         int minorUnits = context.rounding(bank.currencyCode()).minorUnits();
         if (command.amount().signum() <= 0

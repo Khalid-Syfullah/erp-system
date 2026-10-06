@@ -285,7 +285,7 @@ Response headers follow the IETF RateLimit header draft: `RateLimit-Limit`, `Rat
 
 ## 14. Async operations
 
-Long-running commands return `202 Accepted` with `Location: /api/v1/companies/{c}/jobs/{jobId}`. These include payroll calculation, report exports, imports, period close and year close.
+Long-running commands return `202 Accepted` with `Location: /api/v1/companies/{c}/jobs/{jobId}`. These include payroll calculation, report exports (whose job resource is `{c}/report-exports/{id}`, §17.11), imports, period close and year close.
 
 ```json
 { "id": "...", "type": "PAYROLL_CALCULATION", "status": "RUNNING", "progress": {"done": 120, "total": 400},
@@ -468,7 +468,7 @@ Branch-restricted users see quotations, orders, deliveries and returns of their 
 | `POST {c}/open-items/net` [I] `{debitItemId, creditItemId, amount}` (credit note vs invoice) | `accounting.payment.allocate` |
 | `GET/POST {c}/expenses` · `GET/PATCH/DELETE …/{id}` [A] · `POST …/{id}/{post|reverse}` [A][I] | `accounting.expense.read` / `.create` / `.post` |
 | `POST/DELETE {c}/bank-reconciliation-marks` `{journalLineIds[], statementReference, statementDate}` | `accounting.bank_reconciliation.manage` |
-| Reports: `GET {c}/reports/trial-balance?from=&to=&branchId=` · `/general-ledger?accountId=&from=&to=` · `/journal?…` · `/profit-and-loss?from=&to=&compareTo=` · `/balance-sheet?asOf=` · `/ar-ageing?asOf=` · `/ap-ageing?asOf=` · `/partner-statement?partnerId=&from=&to=` · `/tax-summary?from=&to=` · `/cash-book?bankAccountId=&from=&to=` — JSON, amounts at the ledger scale of four decimals; file exports (`?format=csv|xlsx|pdf` → 202 job) come with the export infrastructure (ADR-038) | `accounting.report.read` (+ `accounting.ar.read`/`ap.read` for ageing) |
+| Reports: `GET {c}/reports/trial-balance?from=&to=&branchId=` · `/general-ledger?accountId=&from=&to=` · `/journal?…` · `/profit-and-loss?from=&to=&compareTo=` · `/balance-sheet?asOf=` · `/ar-ageing?asOf=` · `/ap-ageing?asOf=` · `/partner-statement?partnerId=&from=&to=` · `/tax-summary?from=&to=` · `/cash-book?bankAccountId=&from=&to=` — JSON, amounts at the ledger scale of four decimals; these paths are their catalogue entries in §17.11, which exports them (`POST {c}/reports/{code}/exports`, ADR-040) | `accounting.report.read` (+ `accounting.ar.read`/`ap.read` for ageing) |
 | `GET/PUT {c}/settings/accounting` [A] | `accounting.settings.manage` |
 
 ### 17.9 HR
@@ -521,13 +521,54 @@ Branch-restricted users see quotations, orders, deliveries and returns of their 
 
 ### 17.11 Reporting
 
+Phase 10 (ADR-040). Reports run per company; the caller needs **all** of a report's permissions (`403` otherwise, `404` for an unknown code), and branch-scoped data follows the caller's branch scope (SECURITY.md §4.4).
+
 | Method & path | Permission |
 |---|---|
-| `GET {c}/reports` (catalogue filtered by the caller's permissions) | authenticated |
-| `GET {c}/reports/{reportCode}?params…` (sync, bounded) | the report's `permission_code` |
-| `POST {c}/reports/{reportCode}/exports` [I] `{params, format}` → 202 job · `GET {c}/report-exports/{id}` · `GET {c}/report-exports/{id}/content` | the report's permission + `reporting.export.create` |
-| `GET/POST/PATCH/DELETE {c}/saved-reports[/{id}]` | owner / `reporting.saved_report.share` |
-| `GET {c}/dashboards/{dashboardCode}` | per-widget permissions (widgets the caller cannot see are omitted) |
+| `GET {c}/reports` — the catalogue: the reports the caller can run, with path, export path, parameters (name, type, required, default, allowed values, range), columns (key, label, type, total, sortable) and default sort | authenticated |
+| `GET {c}/reports/{reportCode}?params…&limit&cursor&sort` (sync, bounded) | the report's permissions |
+| `POST {c}/reports/{reportCode}/exports` [I] `{format: CSV\|XLSX\|PDF, parameters: {name: value}}` → `202` with the job and `Location` | `reporting.export.create` + the report's permissions |
+| `GET {c}/report-exports` (the caller's jobs; filters `status`, `reportCode`) · `GET {c}/report-exports/{id}` · `GET {c}/report-exports/{id}/content` | `reporting.export.create` + (for one job) the report's permissions; only the requester's jobs (`404` otherwise) |
+| `GET/POST {c}/saved-reports` · `GET/PATCH/DELETE {c}/saved-reports/{id}` | authenticated; own and shared saved reports of runnable reports; sharing needs `reporting.saved_report.share`; changes by the owner only (`If-Match`) |
+| `GET {c}/dashboards` · `GET {c}/dashboards/{dashboardCode}` | authenticated; per-widget permissions (widgets the caller cannot see are omitted) |
+
+**Report response.**
+
+```json
+{
+  "report": { "code": "sales-by-customer", "name": "Sales by customer", "module": "sales" },
+  "parameters": { "from": "2026-10-01", "to": "2026-10-31" },
+  "columns": [ { "key": "customerCode", "label": "Customer code", "type": "TEXT", "total": false, "sortable": true }, … ],
+  "data": [ { "customerId": "0192…", "customerCode": "CUST1", "netSalesBase": "75.0000", … } ],
+  "totals": { "invoiceCount": 2, "netSalesBase": "135.0000", … },
+  "page": { "limit": 100, "nextCursor": "eyJ…", "hasMore": true },
+  "generatedAt": "2026-10-04T10:15:00Z"
+}
+```
+
+- `parameters` echoes the effective values (defaults applied: `asOf` defaults to the company's business date). Unknown, repeated, missing, malformed or out-of-range parameters are `400` with one `errors[]` entry each (`UNKNOWN_PARAMETER`, `DUPLICATE_PARAMETER`, `REQUIRED`, `INVALID_VALUE`, `OUT_OF_RANGE`); a range may span at most 3,660 days.
+- Column types: `TEXT`, `ID`, `DATE`, `INTEGER` (JSON number), `AMOUNT` (decimal string, scale 4, base currency unless named otherwise), `QUANTITY` (decimal string, base unit), `PERCENT`, `DECIMAL`, `BOOLEAN`.
+- Keyset pagination (§8.1): `limit` defaults to 100 and may be up to 1,000; `sort=key,-key` on sortable columns, the report's key columns appended; cursors are signed and valid only for the same report, parameters and sort (`400 INVALID_CURSOR`). `totals` (numeric columns with `total: true`, over all rows) come with the first page only.
+- Synchronous reports are limited to 30 requests per user and minute; the statement timeout is 15 s. Larger extracts are exports.
+- Accounting's statements keep their paths in §17.8 (`{c}/reports/trial-balance`, `general-ledger`, `profit-and-loss`, `balance-sheet`, `ar-ageing`, `ap-ageing`, `cash-book`), which are their catalogue paths; Reporting exports them.
+
+**Catalogue (report code → permission).**
+
+| Area | Reports |
+|---|---|
+| Sales (`reporting.sales.read`) | `sales-summary`, `sales-by-customer`, `sales-by-product`, `sales-by-branch`, `sales-by-period` (DAY/WEEK/MONTH), `invoice-status`, `payment-status`, `gross-margin` (PRODUCT/CATEGORY), `order-backlog` |
+| Procurement (`reporting.procurement.read`) | `purchases` (SUPPLIER/PRODUCT/CATEGORY/BRANCH/MONTH), `supplier-analysis`, `purchase-orders`, `receiving`, `grni`, `outstanding-supplier-bills` |
+| Inventory (`reporting.inventory.read`; valuation `inventory.valuation.read`) | `stock-on-hand` (WAREHOUSE/LOCATION, optional `asOf`), `stock-valuation` (VARIANT/CATEGORY, optional `asOf`), `stock-movements`, `slow-moving` (`days`), `warehouse-summary`, `inventory-adjustments`, `inventory-transactions` |
+| Accounting (`accounting.report.read`; ageing also `accounting.ar.read` / `accounting.ap.read`) | `trial-balance`, `general-ledger`, `profit-and-loss`, `balance-sheet`, `ar-ageing`, `ap-ageing`, `cash-book` (Accounting's statements), `cash-position`, `expenses` (ACCOUNT/MONTH/BRANCH/DEPARTMENT) |
+| HR (`reporting.hr.read`; payroll `payroll.report.read`) | `headcount` (DEPARTMENT/BRANCH/POSITION/EMPLOYMENT_TYPE), `turnover`, `attendance`, `leave`, `payroll-summary` (PERIOD/DEPARTMENT/COMPONENT; no per-employee figures) |
+
+Filters, where the report offers them: `from`/`to`, `asOf`, `branchId`, `departmentId`, `warehouseId`, `locationId`, `customerId`, `supplierId`, `productId`, `categoryId`, `accountId`, `employeeId`, `leaveTypeId`, `reasonCodeId`, statuses and flags (`openOnly`, `overdueOnly`, `pendingBillingOnly`, `includeZero`).
+
+**Exports.** The job has `status` `QUEUED` → `RUNNING` → `SUCCEEDED` (with `rowCount`, `expiresAt` and `contentPath`) or `FAILED` (`errorCode`: `TOO_MANY_ROWS`, `FILE_TOO_LARGE`, `TIMEOUT`, `INVALID_PARAMETERS`, `INTERRUPTED`, `ERROR`), later `EXPIRED`. The job keeps the effective parameters and the requester's branch scope. `content` streams the file (`Content-Disposition: attachment`): `409 EXPORT_NOT_READY` before it succeeded, `409 EXPORT_FAILED` after a failure, `410 EXPORT_EXPIRED` after 7 days. Limits: 1,000,000 rows (PDF 10,000), 200 MB, 10 export requests per user and hour (`429`). CSV is UTF-8 with a byte order mark and neutralises spreadsheet formulas; XLSX and PDF end with a totals row.
+
+**Saved reports.** `{reportCode, name (≤ 100, unique per owner), parameters: {name: value}, isShared}`; parameters are validated against the report (`422` at `/parameters/<name>`) and stored as given. `PATCH` (merge patch) changes `name`, `parameters` and `isShared`, never the report. `409 DUPLICATE_SAVED_REPORT` for a second name. Responses add `ownerId` and `owned`.
+
+**Dashboards.** `executive`, `sales`, `finance`, `operations`, `hr`. A widget is `{code, label, amount, currencyCode, count, secondaryCount, reportCode}`: `sales.mtd` (`reporting.sales.read`), `ar.overdue` (`accounting.ar.read`), `ap.due_7_days` (`accounting.ap.read`), `inventory.stock_value` (`inventory.valuation.read`), `inventory.low_stock` (`reporting.inventory.read`; active variants per warehouse with nothing available), `procurement.open_orders` (`reporting.procurement.read`; open orders and, as `secondaryCount`, orders awaiting approval), `hr.headcount` (`reporting.hr.read`).
 
 ## 18. OpenAPI and client generation
 

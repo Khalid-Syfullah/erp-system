@@ -1,7 +1,8 @@
 package com.erp.accounting.web;
 
 import com.erp.accounting.AccountingPermissions;
-import com.erp.accounting.application.AccountingReports;
+import com.erp.accounting.api.AccountingReports;
+import com.erp.accounting.application.AccountingViews;
 import com.erp.accounting.application.ReportService;
 import com.erp.platform.security.RequiresPermission;
 import com.erp.platform.web.ApiPaths;
@@ -51,7 +52,7 @@ class ReportController {
 
     @RequiresPermission(AccountingPermissions.REPORT_READ)
     @GetMapping("/journal")
-    AccountingReports.JournalReport journal(
+    AccountingViews.JournalReport journal(
             @PathVariable UUID companyId,
             @RequestParam LocalDate from,
             @RequestParam LocalDate to,

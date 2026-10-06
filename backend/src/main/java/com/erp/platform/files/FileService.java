@@ -7,7 +7,12 @@ import com.erp.platform.tx.AfterCommit;
 import com.erp.platform.web.ApiException;
 import com.erp.platform.web.FieldViolation;
 import com.erp.platform.web.PlatformErrorCode;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
@@ -50,6 +55,9 @@ public class FileService {
 
     /** A file with its content. */
     public record Content(StoredFile file, byte[] bytes) {}
+
+    /** A file with its content as a stream, which the caller closes. */
+    public record Stream(StoredFile file, InputStream content) {}
 
     private final FileStorage storage;
     private final FileRepository files;
@@ -95,6 +103,31 @@ public class FileService {
         String key = "company/" + companyId + "/" + module + "/" + entityType + "/" + UUID.randomUUID();
         storage.put(key, content, type);
         return new Upload(companyId, module, entityType, key, name, type, content.length, sha256(content));
+    }
+
+    /**
+     * Writes a file the application generated (a report export, not a user upload) from local disk,
+     * streaming it; called outside a transaction. Its type is set by the generator and its size is
+     * limited by the caller, so the upload allowlist does not apply.
+     */
+    public Upload putGenerated(String module, String entityType, String fileName, String contentType, Path content) {
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalStateException("Object storage is written outside database transactions");
+        }
+        UUID companyId = CurrentContext.requireCompany();
+        String type = contentType.toLowerCase(Locale.ROOT).split(";")[0].strip();
+        String name = sanitize(fileName);
+        try {
+            long size = Files.size(content);
+            if (size == 0 || name.isEmpty()) {
+                throw new IllegalArgumentException("A generated file needs content and a name");
+            }
+            String key = "company/" + companyId + "/" + module + "/" + entityType + "/" + UUID.randomUUID();
+            storage.put(key, content, type);
+            return new Upload(companyId, module, entityType, key, name, type, size, sha256(content));
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 
     /** Records the upload as belonging to {@code entityId}, in the caller's transaction. */
@@ -145,6 +178,16 @@ public class FileService {
         UUID companyId = CurrentContext.requireCompany();
         Optional<StoredFile> file = tx.execute(status -> files.find(companyId, fileId));
         return file == null ? Optional.empty() : file.map(f -> new Content(f, storage.get(f.storageKey())));
+    }
+
+    /** Like {@link #read}, but streams the content instead of loading it into memory. */
+    public Optional<Stream> open(UUID fileId) {
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalStateException("Object storage is read outside database transactions");
+        }
+        UUID companyId = CurrentContext.requireCompany();
+        Optional<StoredFile> file = tx.execute(status -> files.find(companyId, fileId));
+        return file == null ? Optional.empty() : file.map(f -> new Stream(f, storage.open(f.storageKey())));
     }
 
     /** Removes the metadata in the caller's transaction and the content after the commit. */
@@ -216,6 +259,19 @@ public class FileService {
     private static ApiException invalid(String pointer, String code, String message) {
         return ApiException.validationFailed(
                 "The file is invalid.", List.of(FieldViolation.atPointer(pointer, code, message)));
+    }
+
+    private static String sha256(Path content) throws IOException {
+        try (InputStream in = Files.newInputStream(content)) {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] buffer = new byte[64 * 1024];
+            for (int read = in.read(buffer); read >= 0; read = in.read(buffer)) {
+                digest.update(buffer, 0, read);
+            }
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private static String sha256(byte[] content) {

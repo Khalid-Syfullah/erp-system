@@ -1,5 +1,6 @@
 package com.erp.accounting.web;
 
+import com.erp.accounting.api.AccountingReports;
 import com.erp.accounting.application.AccountingViews;
 import com.erp.accounting.application.ChartOfAccountsService;
 import com.erp.platform.web.EntityTags;
@@ -348,7 +349,7 @@ final class AccountingResponses {
             OffsetDateTime createdAt,
             OffsetDateTime updatedAt,
             int version) {
-        static BankAccount from(AccountingViews.BankAccount b) {
+        static BankAccount from(AccountingReports.BankAccount b) {
             return new BankAccount(
                     b.id(),
                     b.name(),
@@ -365,7 +366,7 @@ final class AccountingResponses {
                     b.version());
         }
 
-        static ResponseEntity<BankAccount> entity(AccountingViews.BankAccount b) {
+        static ResponseEntity<BankAccount> entity(AccountingReports.BankAccount b) {
             return ResponseEntity.ok().eTag(EntityTags.forVersion(b.version())).body(from(b));
         }
     }

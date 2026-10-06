@@ -129,6 +129,22 @@ logging:
 erp:
   # Object storage for documents and generated PDFs (ARCHITECTURE.md §8.6). AWS S3 in production
   # (credentials from the default chain, SSE-KMS); MinIO locally and in tests.
+  # Reports read the modules' v_rpt_* views through a read-only pool as erp_reporting (ADR-040);
+  # the URL defaults to the application database and may point at a read replica.
+  reporting:
+    datasource:
+      url: ${ERP_DB_REPORTING_URL:}
+      username: ${ERP_DB_REPORTING_USER:erp_reporting}
+      password: ${ERP_DB_REPORTING_PASSWORD:}
+      pool-size: ${ERP_DB_REPORTING_POOL_SIZE:5}
+    query-timeout: 15s
+    export-timeout: 10m
+    max-export-rows: 1000000
+    max-pdf-rows: 10000
+    max-export-size: 200MB
+    export-retention: 7d
+    exports-per-user-per-hour: 10
+    reports-per-user-per-minute: 30
   files:
     bucket: ${ERP_FILES_BUCKET:}
     region: ${ERP_FILES_REGION:us-east-1}

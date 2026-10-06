@@ -21,6 +21,8 @@ springdoc = "3.1.1"
 awssdk = "2.55.11"
 # Payslip PDFs (ADR-039).
 openpdf = "3.0.5"
+# Streaming XLSX report exports (ADR-040); the reader only in tests.
+fastexcel = "0.20.2"
 postgres-image = "postgres:18.6"
 # Security overrides of versions managed by the Spring Boot BOM. Remove once the BOM ships these or newer.
 #   tomcat 11.0.24: CVE-2026-65182, CVE-2026-65905, CVE-2026-68525 (CRITICAL)
@@ -52,6 +54,8 @@ awssdk-bom = { module = "software.amazon.awssdk:bom", version.ref = "awssdk" }
 awssdk-s3 = { module = "software.amazon.awssdk:s3" }
 awssdk-url-connection-client = { module = "software.amazon.awssdk:url-connection-client" }
 openpdf = { module = "com.github.librepdf:openpdf", version.ref = "openpdf" }
+fastexcel = { module = "org.dhatim:fastexcel", version.ref = "fastexcel" }
+fastexcel-reader = { module = "org.dhatim:fastexcel-reader", version.ref = "fastexcel" }
 
 spring-boot-starter-test = { module = "org.springframework.boot:spring-boot-starter-test" }
 spring-boot-starter-webmvc-test = { module = "org.springframework.boot:spring-boot-starter-webmvc-test" }

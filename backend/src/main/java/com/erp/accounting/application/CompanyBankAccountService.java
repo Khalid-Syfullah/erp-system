@@ -1,5 +1,6 @@
 package com.erp.accounting.application;
 
+import com.erp.accounting.api.AccountingReports;
 import com.erp.accounting.domain.AccountType;
 import com.erp.accounting.persistence.AccountRepository;
 import com.erp.accounting.persistence.CompanyBankAccountRepository;
@@ -55,17 +56,17 @@ public class CompanyBankAccountService {
     }
 
     @Transactional(readOnly = true)
-    public PageResponse<AccountingViews.BankAccount> list(ListQuery query) {
+    public PageResponse<AccountingReports.BankAccount> list(ListQuery query) {
         return bankAccounts.list(context.companyId(), query);
     }
 
     @Transactional(readOnly = true)
-    public AccountingViews.BankAccount get(UUID id) {
+    public AccountingReports.BankAccount get(UUID id) {
         return bankAccounts.find(context.companyId(), id).orElseThrow(ApiException::notFound);
     }
 
     @Transactional
-    public AccountingViews.BankAccount create(AccountingCommands.BankAccount command) {
+    public AccountingReports.BankAccount create(AccountingCommands.BankAccount command) {
         UUID companyId = context.companyId();
         List<FieldViolation> violations = new ArrayList<>();
         var account = accounts.lock(companyId, command.accountId()).orElse(null);
@@ -131,9 +132,9 @@ public class CompanyBankAccountService {
     }
 
     @Transactional
-    public AccountingViews.BankAccount patch(UUID id, @Nullable String ifMatch, JsonNode document) {
+    public AccountingReports.BankAccount patch(UUID id, @Nullable String ifMatch, JsonNode document) {
         UUID companyId = context.companyId();
-        AccountingViews.BankAccount current = bankAccounts.lock(companyId, id).orElseThrow(ApiException::notFound);
+        AccountingReports.BankAccount current = bankAccounts.lock(companyId, id).orElseThrow(ApiException::notFound);
         EntityTags.requireMatch(ifMatch, current.version());
         MergePatch patch = MergePatch.of(document, PATCHABLE);
         var name = patch.text("name", true, 100);
@@ -156,8 +157,8 @@ public class CompanyBankAccountService {
     }
 
     /** The account locked for use by a payment or expense (active, in the given currency if any). */
-    AccountingViews.BankAccount forUse(UUID id, String pointer) {
-        AccountingViews.BankAccount account =
+    AccountingReports.BankAccount forUse(UUID id, String pointer) {
+        AccountingReports.BankAccount account =
                 bankAccounts.forUse(context.companyId(), id).orElse(null);
         if (account == null || !account.active()) {
             throw ApiException.validationFailed(

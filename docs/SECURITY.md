@@ -162,22 +162,22 @@ The "Key permissions" column lists roles' permissions by pattern. The exact perm
 | Role code | Key permissions |
 |---|---|
 | `COMPANY_ADMIN` | `org.*`, `auth.role_assignment.manage` (within the company), `admin.audit.read`, all `*.settings.manage` |
-| `AUDITOR` | All company-scoped `*.read` permissions (not the global-only `admin.system.read`), plus `accounting.report.read`, `admin.audit.read`, `inventory.valuation.read`, `accounting.ar.read`, `accounting.ap.read` — **no** write permissions, **no** `*.read_sensitive` / `read_bank` / payroll |
+| `AUDITOR` | All company-scoped `*.read` permissions (not the global-only `admin.system.read`), plus `accounting.report.read`, `admin.audit.read`, `inventory.valuation.read`, `accounting.ar.read`, `accounting.ap.read`, `reporting.export.create` — **no** write permissions, **no** `*.read_sensitive` / `read_bank` / payroll |
 | `WAREHOUSE_CLERK` | `inventory.product.read`, `inventory.warehouse.read`, `inventory.stock.read`, `inventory.movement.read/create/post`, `inventory.count.manage`, `procurement.receipt.read/create/post`, `sales.delivery.read/create/post`, `procurement.purchase_order.read`, `sales.order.read` |
-| `INVENTORY_MANAGER` | `WAREHOUSE_CLERK` + `inventory.product.manage`, `inventory.warehouse.manage`, `inventory.adjustment.*`, `inventory.count.post`, `inventory.movement.reverse`, `inventory.valuation.read`, `reporting.inventory.read` |
+| `INVENTORY_MANAGER` | `WAREHOUSE_CLERK` + `inventory.product.manage`, `inventory.warehouse.manage`, `inventory.adjustment.*`, `inventory.count.post`, `inventory.movement.reverse`, `inventory.valuation.read`, `reporting.inventory.read`, `reporting.export.create`, `reporting.saved_report.share` |
 | `BUYER` | `partners.partner.read`, `partners.supplier.manage`, `procurement.requisition.*` except approve, `procurement.purchase_order.read/create`, `procurement.receipt.read`, `inventory.product.read`, `inventory.stock.read` |
-| `PROCUREMENT_MANAGER` | `BUYER` + `procurement.requisition.approve`, `procurement.purchase_order.approve/approve_high/cancel/close`, `procurement.return.manage`, `reporting.procurement.read` |
+| `PROCUREMENT_MANAGER` | `BUYER` + `procurement.requisition.approve`, `procurement.purchase_order.approve/approve_high/cancel/close`, `procurement.return.manage`, `reporting.procurement.read`, `reporting.export.create`, `reporting.saved_report.share` |
 | `SALES_REP` | `partners.partner.read`, `partners.customer.manage`, `sales.price_list.read`, `sales.quotation.*`, `sales.order.read/create/confirm`, `inventory.stock.read`, `inventory.product.read` |
-| `SALES_MANAGER` | `SALES_REP` + `sales.order.override_credit/override_price/discount_high/cancel/close`, `sales.price_list.manage`, `sales.return.manage`, `reporting.sales.read` |
+| `SALES_MANAGER` | `SALES_REP` + `sales.order.override_credit/override_price/discount_high/cancel/close`, `sales.price_list.manage`, `sales.return.manage`, `reporting.sales.read`, `reporting.export.create`, `reporting.saved_report.share` |
 | `BILLING_CLERK` | `sales.invoice.*` except `create_direct`, `sales.order.read`, `sales.delivery.read`, `accounting.ar.read` |
 | `AR_CLERK` | `accounting.ar.read`, `accounting.payment.read/create/post/allocate`, `partners.partner.read`, `accounting.bank_account.read`, `sales.invoice.read` |
 | `AP_CLERK` | `accounting.ap.read`, `procurement.supplier_bill.read/create/post`, `accounting.payment.read/create/post/allocate`, `partners.partner.read`, `partners.partner.read_bank`, `accounting.bank_account.read` |
-| `ACCOUNTANT` | `accounting.*` except `period.close/reopen`, `fiscal_year.close`, `payment.void`, `account_mapping.manage`; plus `accounting.report.read` and read access to Sales and Procurement documents |
-| `FINANCIAL_CONTROLLER` | All `accounting.*`, `procurement.supplier_bill.override_match`, `sales.invoice.create_direct`, `procurement.supplier_bill.create_direct`, `org.exchange_rate.*`, `org.tax_code.*`, `partners.partner.manage_bank` |
+| `ACCOUNTANT` | `accounting.*` except `period.close/reopen`, `fiscal_year.close`, `payment.void`, `account_mapping.manage`; plus `accounting.report.read`, `reporting.export.create` and read access to Sales and Procurement documents |
+| `FINANCIAL_CONTROLLER` | All `accounting.*`, `procurement.supplier_bill.override_match`, `sales.invoice.create_direct`, `procurement.supplier_bill.create_direct`, `org.exchange_rate.*`, `org.tax_code.*`, `partners.partner.manage_bank`, `reporting.export.create`, `reporting.saved_report.share` |
 | `HR_OFFICER` | `hr.employee.read/manage`, `hr.position.manage`, `hr.leave.*`, `hr.attendance.*`, `org.branch.read`, `org.department.read` (to place employees in the structure) |
-| `HR_MANAGER` | `HR_OFFICER` + `hr.employee.read_sensitive`, `hr.employee.manage_bank`, `hr.employee.terminate`, `reporting.hr.read` |
+| `HR_MANAGER` | `HR_OFFICER` + `hr.employee.read_sensitive`, `hr.employee.manage_bank`, `hr.employee.terminate`, `reporting.hr.read`, `reporting.export.create`, `reporting.saved_report.share` |
 | `PAYROLL_OFFICER` | `payroll.configuration.manage`, `payroll.compensation.*`, `payroll.run.read/prepare`, `payroll.payslip.read`, `hr.employee.read` |
-| `PAYROLL_APPROVER` | `payroll.run.read/approve/post/pay`, `payroll.payslip.read`, `payroll.report.read` |
+| `PAYROLL_APPROVER` | `payroll.run.read/approve/post/pay`, `payroll.payslip.read`, `payroll.report.read`, `reporting.export.create` |
 | `EMPLOYEE` | None beyond the self-service endpoints. These are authorized by the employee link, not by permissions. |
 
 **System administrator** (`auth.users.is_system_admin = true`) is a deployment-level flag, not a role. It grants these global permissions:
@@ -215,6 +215,7 @@ Company-wide resources (CoA, partners, products, journal entries) are not branch
 - **Automated test (mandatory from Phase 3):** an `IdorSuiteTest` enumerates every endpoint with a path or body ID, creates fixtures in companies A and B, authenticates as a full-permission user of A only, and asserts a 404 (or 422 for body references) for every B identifier. Every new endpoint is covered automatically by OpenAPI introspection.
   - *Phase 3 implementation:* `EndpointSecurityMatrixTest` enumerates the registered handler methods (there is no OpenAPI document yet). For every endpoint it asserts 401 for anonymous callers, 404 for a member of company A addressing company B, and 403 for a member without the required permission. `AuthorizationIntegrationTest` adds fixture-based IDOR cases: another company's branch through one's own company path (GET, PATCH, actions), another company's role assignment, and foreign branch IDs in an assignment body (422). Each later module adds its fixture cases.
   - *Phase 9:* HR and payroll suites add cases: another company's employee documents through one's own path (404); employees reach only their own record, leave, attendance and released payslips through `/me/...` (another employee's payslip: 404); managers decide only their direct and indirect reports' leave (404 otherwise). Date of birth, national ID and employee bank accounts are field-encrypted, masked in responses and revealed only after step-up with a `VIEW_SENSITIVE` audit record; salary data appears only to payroll permissions and in the employee's own released payslips (ADR-039).
+  - *Phase 10:* reporting suites add cases: a report needs all its permissions (403) and is listed in the catalogue only then; another company's members get 404 on the company's reports and exports; another user's export job is 404; branch-restricted users see only their branches' lines, documents, stock and employees, also in exports (the job keeps the requester's scope); `erp_reporting` reads views only, writes nothing, sees no encrypted, contact or account-number columns, and sees no rows without a company context; CSV exports neutralise formulas (ADR-040).
   - *Phase 6:* the procurement and partner suites add IDOR cases: another company's orders, receipts, partners and supplier profiles through one's own path (404), and foreign suppliers, warehouses, products and payment terms in bodies (422). Partner bank accounts are field-encrypted, listed masked (`****1234`) to `partners.partner.read_bank`, and revealed only after step-up with a `VIEW_SENSITIVE` audit record; the change notification to the procurement manager (PRODUCT_SPEC.md §5) follows with the notification pipeline (ADR-036).
   - *Phase 5:* the OpenAPI document exists (`OpenApiContractTest`, ADR-035) and is checked against the same handler annotations, so the matrix keeps its handler introspection. `InventoryAccessIntegrationTest` adds inventory IDOR cases: another company's movements, variants and warehouses through one's own path (404), and foreign variants, locations and warehouses in movement bodies (422). Branch-restricted users get 404 for other branches' warehouses, locations and movements. The OpenAPI document is not served at runtime.
 
@@ -356,9 +357,9 @@ Limits are enforced in two places:
 | Invitation and reset acceptance | IP | 10 per hour |
 | Authenticated API (session) | user | 600 per minute (per instance; no separate burst) |
 | API token | token | 1,200 per minute (configurable per token) |
-| Report exports | user | 10 per hour |
+| Report exports | user | 10 per hour (counted in the database, shared by instances) |
 | File uploads | user | 60 per hour |
-| Expensive synchronous reports | user | 30 per minute |
+| Expensive synchronous reports | user | 30 per minute (`GET {c}/reports/{code}`) |
 
 A 429 response includes a `Retry-After` header. Limit hits are counted in metrics, and sustained abuse raises an alert.
 

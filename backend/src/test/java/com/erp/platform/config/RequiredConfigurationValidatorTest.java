@@ -18,7 +18,8 @@ class RequiredConfigurationValidatorTest {
                 .withProperty("erp.crypto.field-encryption-keys", "configured")
                 .withProperty("erp.auth.public-base-url", "https://erp.example.test")
                 .withProperty("spring.mail.host", "smtp.example.test")
-                .withProperty("erp.files.bucket", "erp-files");
+                .withProperty("erp.files.bucket", "erp-files")
+                .withProperty("erp.reporting.datasource.password", "reporting-secret");
     }
 
     @Test
@@ -34,6 +35,7 @@ class RequiredConfigurationValidatorTest {
         MockEnvironment env = complete().withProperty("spring.datasource.password", "");
         env.setProperty("erp.api.cursor-signing-key", " ");
         env.setProperty("erp.files.bucket", "");
+        env.setProperty("erp.reporting.datasource.password", "");
         env.setActiveProfiles("prod");
 
         assertThatThrownBy(() -> RequiredConfigurationValidator.validate(env))
@@ -41,6 +43,7 @@ class RequiredConfigurationValidatorTest {
                 .hasMessageContaining("ERP_DB_APP_PASSWORD")
                 .hasMessageContaining("ERP_API_CURSOR_SIGNING_KEY")
                 .hasMessageContaining("ERP_FILES_BUCKET")
+                .hasMessageContaining("ERP_DB_REPORTING_PASSWORD")
                 .hasMessageNotContaining("jdbc:postgresql")
                 .hasMessageNotContaining("erp_app");
     }

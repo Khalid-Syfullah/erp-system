@@ -22,6 +22,7 @@ public final class TestDatabase {
     public static final String DATABASE = "erp";
     public static final String MIGRATOR_PASSWORD = secret();
     public static final String APP_PASSWORD = secret();
+    public static final String REPORTING_PASSWORD = secret();
 
     private static final PostgreSQLContainer CONTAINER = new PostgreSQLContainer(
                     System.getProperty("erp.test.postgres-image", "postgres:18.6"))
@@ -40,6 +41,8 @@ public final class TestDatabase {
         registry.add("spring.datasource.password", () -> APP_PASSWORD);
         registry.add("spring.flyway.user", () -> "erp_migrator");
         registry.add("spring.flyway.password", () -> MIGRATOR_PASSWORD);
+        registry.add("erp.reporting.datasource.password", () -> REPORTING_PASSWORD);
+        registry.add("erp.reporting.datasource.pool-size", () -> "3");
     }
 
     public static String jdbcUrl() {
@@ -68,6 +71,7 @@ public final class TestDatabase {
             // Random hex only, so string concatenation cannot inject SQL.
             statement.execute("ALTER ROLE erp_migrator PASSWORD '" + MIGRATOR_PASSWORD + "'");
             statement.execute("ALTER ROLE erp_app PASSWORD '" + APP_PASSWORD + "'");
+            statement.execute("ALTER ROLE erp_reporting PASSWORD '" + REPORTING_PASSWORD + "'");
         } catch (SQLException e) {
             throw new IllegalStateException("Database bootstrap failed", e);
         } catch (IOException e) {

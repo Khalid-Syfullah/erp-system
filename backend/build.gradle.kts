@@ -85,6 +85,7 @@ dependencies {
     }
     implementation(libs.awssdk.url.connection.client)
     implementation(libs.openpdf)
+    implementation(libs.fastexcel)
     runtimeOnly(libs.micrometer.registry.prometheus)
 
     testImplementation(platform(libs.spring.boot.bom))
@@ -98,6 +99,7 @@ dependencies {
     testImplementation(libs.testcontainers.postgresql)
     testImplementation(libs.testcontainers.junit.jupiter)
     testImplementation(libs.archunit.junit5)
+    testImplementation(libs.fastexcel.reader)
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 

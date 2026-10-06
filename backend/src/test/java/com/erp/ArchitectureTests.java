@@ -142,6 +142,14 @@ class ArchitectureTests {
         };
     }
 
+    /**
+     * Reporting reads the other modules' published {@code v_rpt_*} views (DATABASE.md §11, ADR-040),
+     * never their tables.
+     */
+    private static boolean reportingView(String module, String targetClass) {
+        return module.equals("reporting") && targetClass.startsWith("VRpt");
+    }
+
     private static ArchCondition<JavaClass> onlyAccessOwnSchema() {
         Pattern modulePackage = Pattern.compile("^com\\.erp\\.([a-z]+)(\\..*)?$");
         Pattern schemaPackage = Pattern.compile("^com\\.erp\\.db\\.([a-z_]+)(\\..*)?$");
@@ -153,7 +161,10 @@ class ArchitectureTests {
                 javaClass.getDirectDependenciesFromSelf().forEach(dependency -> {
                     Matcher target =
                             schemaPackage.matcher(dependency.getTargetClass().getPackageName());
-                    if (target.matches() && !target.group(1).equals(module)) {
+                    if (target.matches()
+                            && !target.group(1).equals(module)
+                            && !reportingView(
+                                    module, dependency.getTargetClass().getSimpleName())) {
                         events.add(SimpleConditionEvent.violated(
                                 dependency, javaClass.getName() + " accesses schema '" + target.group(1) + "'"));
                     }

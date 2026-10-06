@@ -25,7 +25,8 @@ import org.springframework.test.context.DynamicPropertySource;
     SalesFixtures.class,
     AccountingFixtures.class,
     HrFixtures.class,
-    PayrollFixtures.class
+    PayrollFixtures.class,
+    ReportingFixtures.class
 })
 public abstract class IntegrationTest {
 

@@ -723,26 +723,36 @@ stateDiagram-v2
 
 ## 13. Reporting and analytics
 
-Reports owned by Reporting are cross-module, operational reports. Financial statements belong to Accounting (§8.10) and are surfaced in the same report centre.
+Reports owned by Reporting are cross-module, operational reports, built on each module's published views. Financial statements belong to Accounting (§8.10); the report centre lists them and exports them, but Accounting computes them (ADR-040). Report codes are in API.md §17.11.
 
 | Report | Source | Notes |
 |---|---|---|
-| Stock on hand (by warehouse/location/category) | inventory views | As of now; also as of a date via the ledger |
-| Stock valuation (as of date) | inventory views | Reconciles to the GL inventory account |
-| Stock movement history | inventory views | |
-| Slow-moving / no-movement items | inventory views | Configurable days |
-| Purchases by supplier / product / period | procurement views | |
-| Open POs and receipts pending billing (GRNI detail) | procurement views | Reconciles to the GRNI account |
-| Sales by customer / product / category / branch / period | sales views | Net of credit notes |
+| Stock on hand (by warehouse/location; filters warehouse, location, product, category) | inventory views | As of now (with reserved and available); as of a date via the ledger |
+| Stock valuation (by variant/category) | inventory views | Now or as of a date; reconciles to the GL inventory accounts; `inventory.valuation.read` |
+| Stock movement summary (opening, purchases, sales, transfers, adjustments, closing) and inventory transaction history | inventory views | A reversal counts as what it reverses |
+| Inventory adjustments (adjustments, scrap, count differences, with reasons) | inventory views | Reconciles to the adjustment expense |
+| Slow-moving / no-movement items | inventory views | Configurable days; transfers do not count as movement |
+| Warehouse summary (SKUs, on hand, reserved, inbound, outbound, movements) | inventory views | |
+| Purchases by supplier / product / category / branch / month | procurement views | Bills net of debit notes |
+| Supplier analysis (orders, receipts, received and billed value, on-time receipts, lead time, open payables) | procurement + accounting views | |
+| Purchase orders with receipt and billing progress; receiving | procurement views | |
+| Receipts pending billing (GRNI detail) | procurement views | Reconciles to the GRNI account |
+| Outstanding supplier bills | procurement + accounting views | From Accounting's open items |
+| Sales summary; sales by customer / product / branch / period | sales views | Net of credit notes; reconciles to revenue and output tax |
+| Invoice status and payment status | sales + accounting views | Payment status from Accounting's open items |
 | Order backlog and uninvoiced deliveries | sales views | |
-| Gross margin by product/category | sales + inventory | Revenue (invoice) vs COGS (delivery cost) |
-| Headcount and turnover | hr views | |
-| Payroll summary by period / department / component | payroll views | Permission-gated |
-| Dashboards | KPIs: sales MTD, AR overdue, AP due next 7 days, stock value, low-stock count, open POs | Per-role dashboards |
+| Gross margin by product/category | sales + inventory views | Revenue (invoice) vs COGS (delivery and return cost); COGS reconciles to the GL |
+| Trial balance, general ledger, income statement, balance sheet, AR/AP ageing, cash book | Accounting (§8.10) | Exportable from the report centre |
+| Cash and bank position; expenses by account / month / branch / department | accounting views | From the posted ledger; expenses equal the income statement's |
+| Headcount (by department/branch/position/employment type) and turnover | hr views | Equals HR's headcount |
+| Attendance and leave taken | hr views | |
+| Payroll summary by period / department / component | payroll views | `payroll.report.read`; no per-employee figures |
+| Dashboards | KPIs: sales MTD, AR overdue, AP due next 7 days, stock value, low-stock count (out of stock or fully committed: v1 has no reorder points), open POs, headcount | Per-role dashboards (executive, sales, finance, operations, HR); widgets by permission |
 
-- Reports return within 2 s (p95) for standard parameter ranges. Larger requests run as **async exports** (CSV/XLSX/PDF) and notify the user when they are ready.
-- Every report enforces the same company and branch scoping and permissions as the underlying data.
+- Reports return within 2 s (p95) for standard parameter ranges (one period) on the volume dataset; pages are bounded and keyset-paginated, with totals. Larger requests run as **async exports** (CSV, XLSX, PDF; CSV safe against formula injection; row and size limits; files expire after 7 days). The user polls the export; e-mail notification follows with the notification infrastructure.
+- Every report enforces the same company and branch scoping and permissions as the underlying data; reports read through a read-only database role.
 - Saved report parameters can be stored per user, or shared within the company.
+- Reports are per company; consolidated multi-company reporting is out of scope for v1.
 
 ---
 

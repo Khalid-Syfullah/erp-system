@@ -1,14 +1,15 @@
-package com.erp.accounting.application;
+package com.erp.accounting.api;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The financial reports (PRODUCT_SPEC.md §8.10). Amounts are in base currency unless a field says
+ * The financial reports (PRODUCT_SPEC.md §8.10), published to Reporting through {@link FinancialReports}. Amounts are in base currency unless a field says
  * otherwise; signed balances are debit − credit. Every report is computed from the posted general
  * ledger (or the open items, for ageing), so it reconciles to the GL. Amounts carry the ledger's
  * scale of 4 decimals.
@@ -96,8 +97,6 @@ public final class AccountingReports {
             closing = amount(closing);
         }
     }
-
-    public record JournalReport(LocalDate from, LocalDate to, List<AccountingViews.JournalEntryDetail> entries) {}
 
     public record StatementLine(
             AccountRef account, BigDecimal amount, @Nullable BigDecimal comparison) {
@@ -225,16 +224,52 @@ public final class AccountingReports {
     }
 
     public record CashBook(
-            AccountingViews.BankAccount bankAccount,
+            BankAccount bankAccount,
             LocalDate from,
             LocalDate to,
             BigDecimal opening,
-            List<AccountingViews.BankTransaction> transactions,
+            List<BankTransaction> transactions,
             BigDecimal closing) {
 
         public CashBook {
             opening = amount(opening);
             closing = amount(closing);
+        }
+    }
+
+    public record BankAccount(
+            UUID id,
+            String name,
+            UUID accountId,
+            String currencyCode,
+            @Nullable String bankName,
+            @Nullable String accountNumberLast4,
+            boolean hasAccountNumber,
+            boolean hasIban,
+            boolean active,
+            OffsetDateTime createdAt,
+            OffsetDateTime updatedAt,
+            int version) {}
+
+    public record BankTransaction(
+            UUID journalLineId,
+            UUID journalEntryId,
+            @Nullable String entryNumber,
+            LocalDate entryDate,
+            String description,
+            @Nullable String sourceModule,
+            @Nullable String sourceType,
+            @Nullable UUID sourceId,
+            @Nullable String sourceNumber,
+            BigDecimal debit,
+            BigDecimal credit,
+            BigDecimal amountCurrency,
+            BigDecimal runningBalance,
+            @Nullable String statementReference,
+            @Nullable LocalDate statementDate) {
+
+        public boolean reconciled() {
+            return statementReference != null;
         }
     }
 }

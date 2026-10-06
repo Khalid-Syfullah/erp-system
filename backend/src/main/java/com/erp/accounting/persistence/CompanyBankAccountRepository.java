@@ -2,8 +2,8 @@ package com.erp.accounting.persistence;
 
 import static com.erp.db.accounting.Tables.BANK_ACCOUNTS;
 
+import com.erp.accounting.api.AccountingReports;
 import com.erp.accounting.application.AccountingListings;
-import com.erp.accounting.application.AccountingViews;
 import com.erp.db.accounting.tables.records.BankAccountsRecord;
 import com.erp.platform.jooq.KeysetPaginator;
 import com.erp.platform.jooq.ListBinding;
@@ -86,7 +86,7 @@ public class CompanyBankAccountRepository {
                 == 1;
     }
 
-    public Optional<AccountingViews.BankAccount> find(UUID companyId, UUID id) {
+    public Optional<AccountingReports.BankAccount> find(UUID companyId, UUID id) {
         return dsl.selectFrom(BANK_ACCOUNTS)
                 .where(BANK_ACCOUNTS.COMPANY_ID.eq(companyId))
                 .and(BANK_ACCOUNTS.ID.eq(id))
@@ -94,7 +94,7 @@ public class CompanyBankAccountRepository {
     }
 
     /** The account {@code FOR SHARE}: a deactivation waits for the payment using it. */
-    public Optional<AccountingViews.BankAccount> forUse(UUID companyId, UUID id) {
+    public Optional<AccountingReports.BankAccount> forUse(UUID companyId, UUID id) {
         return dsl.selectFrom(BANK_ACCOUNTS)
                 .where(BANK_ACCOUNTS.COMPANY_ID.eq(companyId))
                 .and(BANK_ACCOUNTS.ID.eq(id))
@@ -102,7 +102,7 @@ public class CompanyBankAccountRepository {
                 .fetchOptional(CompanyBankAccountRepository::toView);
     }
 
-    public Optional<AccountingViews.BankAccount> lock(UUID companyId, UUID id) {
+    public Optional<AccountingReports.BankAccount> lock(UUID companyId, UUID id) {
         return dsl.selectFrom(BANK_ACCOUNTS)
                 .where(BANK_ACCOUNTS.COMPANY_ID.eq(companyId))
                 .and(BANK_ACCOUNTS.ID.eq(id))
@@ -110,14 +110,14 @@ public class CompanyBankAccountRepository {
                 .fetchOptional(CompanyBankAccountRepository::toView);
     }
 
-    public Optional<AccountingViews.BankAccount> byGlAccount(UUID companyId, UUID accountId) {
+    public Optional<AccountingReports.BankAccount> byGlAccount(UUID companyId, UUID accountId) {
         return dsl.selectFrom(BANK_ACCOUNTS)
                 .where(BANK_ACCOUNTS.COMPANY_ID.eq(companyId))
                 .and(BANK_ACCOUNTS.ACCOUNT_ID.eq(accountId))
                 .fetchOptional(CompanyBankAccountRepository::toView);
     }
 
-    public PageResponse<AccountingViews.BankAccount> list(UUID companyId, ListQuery query) {
+    public PageResponse<AccountingReports.BankAccount> list(UUID companyId, ListQuery query) {
         return paginator.fetch(
                 dsl,
                 BANK_ACCOUNTS,
@@ -127,8 +127,8 @@ public class CompanyBankAccountRepository {
                 CompanyBankAccountRepository::toView);
     }
 
-    static AccountingViews.BankAccount toView(BankAccountsRecord r) {
-        return new AccountingViews.BankAccount(
+    static AccountingReports.BankAccount toView(BankAccountsRecord r) {
+        return new AccountingReports.BankAccount(
                 r.getId(),
                 r.getName(),
                 r.getAccountId(),
