@@ -3,6 +3,7 @@
 // with `q` and fetched by ID ('search'); IDs shown together are fetched together (`batch`).
 import { api, type CompanyApi, type Query, type Schemas } from '@/api/client';
 import type { Filters, Page } from '@/api/list';
+import { serverText } from '@/i18n';
 import { formatDecimal } from '@/lib/format';
 
 export interface EntitySource<T = unknown> {
@@ -320,7 +321,7 @@ export const entities = {
     permission: 'auth.role_assignment.manage',
     list: async (c, _, signal) => asPage(await c.get('/roles', null, { signal })),
     id: (r) => r.id!,
-    label: (r) => r.name ?? r.code!,
+    label: (r) => serverText(r.name) || r.code!,
     description: (r) => r.code,
   }),
 };

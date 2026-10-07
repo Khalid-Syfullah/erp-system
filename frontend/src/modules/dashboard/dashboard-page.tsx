@@ -8,7 +8,7 @@ import { useMe } from '@/auth/session';
 import { PageHeader } from '@/components/common/page';
 import { EmptyState, ErrorState, LoadingState } from '@/components/feedback/states';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { t } from '@/i18n';
+import { serverText, t } from '@/i18n';
 import { formatDate, formatDecimal, formatMoney } from '@/lib/format';
 
 type Widget = Schemas['Widget'];
@@ -41,7 +41,7 @@ export function DashboardPage({ title }: { title?: string } = {}) {
               <SelectContent>
                 {dashboards.map((d) => (
                   <SelectItem key={d.code} value={d.code!}>
-                    {d.name}
+                    {serverText(d.name)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -58,7 +58,7 @@ export function DashboardPage({ title }: { title?: string } = {}) {
       ) : !dashboard.data || (dashboard.data.widgets ?? []).length === 0 ? (
         <EmptyState title={t('dashboard.noWidgets')} />
       ) : (
-        <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label={dashboard.data.name}>
+        <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label={serverText(dashboard.data.name)}>
           {(dashboard.data.widgets ?? []).map((widget) => (
             <WidgetCard key={widget.code} widget={widget} companyId={companyId} />
           ))}
@@ -73,7 +73,7 @@ function WidgetCard({ widget, companyId }: { widget: Widget; companyId: string }
   return (
     <li className="flex flex-col justify-between gap-3 rounded-lg border bg-card p-4">
       <div className="space-y-1">
-        <h2 className="text-sm text-muted-foreground">{widget.label}</h2>
+        <h2 className="text-sm text-muted-foreground">{serverText(widget.label)}</h2>
         <p className="text-2xl font-semibold tabular">
           {hasAmount ? formatMoney(widget.amount, widget.currencyCode) : formatDecimal(String(widget.count ?? 0))}
         </p>
@@ -91,7 +91,7 @@ function WidgetCard({ widget, companyId }: { widget: Widget; companyId: string }
           className="inline-flex items-center gap-1 text-sm text-primary underline-offset-4 hover:underline"
         >
           {t('dashboard.openReport')}
-          <span className="sr-only">: {widget.label}</span>
+          <span className="sr-only">: {serverText(widget.label)}</span>
           <ArrowRight className="size-3.5" aria-hidden />
         </Link>
       ) : null}

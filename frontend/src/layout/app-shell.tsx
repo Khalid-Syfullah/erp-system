@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from '@/api/client';
+import { changeLanguage, LanguageSwitcher } from '@/auth/language';
 import { companiesOf, useMe } from '@/auth/session';
 import { rememberCompany } from '@/auth/last-company';
 import { permissionsOf } from '@/auth/permissions';
@@ -40,7 +41,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
-import { t } from '@/i18n';
+import { type Language, language, LANGUAGES, t } from '@/i18n';
 import { useTheme, type Theme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
 import { globalAdminGroup, visibleGroups, type NavGroup } from './nav';
@@ -239,6 +240,15 @@ function UserMenu() {
           </DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
+        <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">{t('shell.language')}</DropdownMenuLabel>
+        <DropdownMenuRadioGroup value={language()} onValueChange={(v) => void changeLanguage(v as Language, me.user)}>
+          {(['bn', 'en'] as const).map((option) => (
+            <DropdownMenuRadioItem key={option} value={option} lang={LANGUAGES[option].locale}>
+              {LANGUAGES[option].label}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => void signOut()}>
           <LogOut aria-hidden />
           {t('auth.signOut')}
@@ -345,6 +355,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <CompanySwitcher />
           <div className="ml-auto flex items-center gap-2">
             <CommandMenu />
+            <LanguageSwitcher className="hidden sm:flex" />
             <UserMenu />
           </div>
         </header>

@@ -111,6 +111,14 @@ class PartnersIntegrationTest extends IntegrationTest {
                 .andExpect(jsonPath("$.data[*].code").value(contains("GLOBEX")));
         mvc.perform(get(p.path("/partners")).cookie(p.session()).param("filter[id][in]", partner + "," + p.supplier()))
                 .andExpect(jsonPath("$.data[*].code").value(contains("ACME", "GLOBEX")));
+        // Bangla names are found whichever code points the user types (both sides are NFC): here the
+        // name was entered with "য়" as U+09DF and is searched with য + nukta (U+09AF U+09BC).
+        create("/partners", json("code", "AYESHA", "name", "আ\u09DFেশা এন্টারপ্রাইজ", "partnerType", "ORGANIZATION"))
+                .andExpect(status().isCreated());
+        mvc.perform(get(p.path("/partners")).cookie(p.session()).param("q", "আ\u09AF\u09BCেশা"))
+                .andExpect(jsonPath("$.data[*].code").value(contains("AYESHA")));
+        mvc.perform(get(p.path("/partners")).cookie(p.session()).param("q", "এন্টারপ্রাইজ"))
+                .andExpect(jsonPath("$.data[*].code").value(contains("AYESHA")));
         mvc.perform(get(p.path("/suppliers")).cookie(p.session()))
                 .andExpect(jsonPath("$.data[*].code").value(contains("ACME")))
                 .andExpect(jsonPath("$.data[0].profile.currencyCode").value("USD"));

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { api } from '@/api/client';
+import { LanguageSwitcher } from '@/auth/language';
 import { RecoveryCodes, MfaEnrollment } from '@/auth/mfa-enrollment';
 import { companiesOf, meQuery, useMe } from '@/auth/session';
 import { PageHeader, Section } from '@/components/common/page';
@@ -52,14 +53,13 @@ export function AccountPage() {
 
 const profileSchema = z.object({
   displayName: zf.text(100),
-  locale: zf.optionalText(35),
   timezone: zf.optionalText(64),
 });
 
 function ProfileSection() {
   const me = useMe();
   const queryClient = useQueryClient();
-  const initial = { displayName: me.user?.displayName ?? '', locale: me.user?.locale ?? '', timezone: me.user?.timezone ?? '' };
+  const initial = { displayName: me.user?.displayName ?? '', timezone: me.user?.timezone ?? '' };
   const form = useForm<z.infer<typeof profileSchema>>({ resolver: zodResolver(profileSchema), defaultValues: initial });
   const { submit, ...problem } = useSubmit(form, async (values) => {
     await api.patch('/api/v1/me', {}, { body: mergePatch(initial, values), ifMatch: me.user?.version });
@@ -70,8 +70,12 @@ function ProfileSection() {
     <Section title={t('account.profile')}>
       <Form form={form} onSubmit={submit}>
         <TextField name="displayName" label={t('account.displayName')} required maxLength={100} />
+        <div className="space-y-1.5">
+          <div className="text-sm font-medium">{t('account.locale')}</div>
+          <LanguageSwitcher />
+          <p className="text-xs text-muted-foreground">{t('account.localeHint')}</p>
+        </div>
         <FieldGrid>
-          <TextField name="locale" label={t('account.locale')} hint={t('account.localeHint')} />
           <TextField name="timezone" label={t('account.timezone')} hint={t('account.timezoneHint')} />
         </FieldGrid>
         <p className="text-sm text-muted-foreground">{me.user?.email}</p>

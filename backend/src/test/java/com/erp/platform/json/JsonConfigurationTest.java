@@ -13,6 +13,8 @@ class JsonConfigurationTest {
 
     record Payment(BigDecimal amount, String reference, int lines, boolean urgent, Kind kind, List<String> tags) {}
 
+    record Login(String name, @RawText String password) {}
+
     enum Kind {
         INBOUND,
         OUTBOUND
@@ -83,5 +85,15 @@ class JsonConfigurationTest {
                 {"amount":"1","reference":"line1\\nline2\\tx","lines":1,"urgent":false,"kind":"INBOUND","tags":[]}""", Payment.class);
 
         assertThat(p.reference()).isEqualTo("line1\nline2\tx");
+    }
+
+    @Test
+    void storesTextInNfcButKeepsRawTextAsTyped() {
+        // "য়" typed as one code point (U+09DF) is canonically equal to য + nukta (U+09AF U+09BC), its NFC form.
+        String typed = "\u0986\u09DF\u09C7\u09B6\u09BE";
+        Login login = mapper.readValue("{\"name\":\"" + typed + "\",\"password\":\"" + typed + "\"}", Login.class);
+
+        assertThat(login.name()).isEqualTo("\u0986\u09AF\u09BC\u09C7\u09B6\u09BE");
+        assertThat(login.password()).isEqualTo(typed);
     }
 }

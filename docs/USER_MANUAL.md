@@ -167,6 +167,8 @@ Alice and Bob are deliberately different people: the system enforces **segregati
 
 Open <http://localhost:5173>.
 
+> **Language.** The ERP opens in **Bangla** (বাংলা). This manual and its screenshots use English: choose **English** in the **বাংলা | English** switch at the top right of the sign-in page. The choice is remembered in the browser and, after you sign in, in your profile, so it follows you to other devices. You can switch at any time in the page header, the user menu or **My account**. See [LOCALIZATION.md](LOCALIZATION.md).
+
 **1. Enter the e-mail address and password.**
 
 ![The sign-in page](manual/images/01-sign-in.png)

@@ -22,7 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { enumLabel, t } from '@/i18n';
+import { enumLabel, searchable, t } from '@/i18n';
 import { accountSubtypes, enumOptions, enums } from '@/lib/enums';
 import { cn } from '@/lib/utils';
 import { useFormContext } from 'react-hook-form';
@@ -67,8 +67,8 @@ export function AccountsPage() {
     const data = tree.data as unknown as Node | Node[] | { data?: Node[] } | undefined;
     const roots = Array.isArray(data) ? data : data && 'data' in data && Array.isArray(data.data) ? data.data : data && 'children' in data ? (data.account ? [data as Node] : (data as Node).children ?? []) : [];
     const all = flatten(roots);
-    const term = filter.trim().toLowerCase();
-    return term ? all.filter((r) => `${r.account.code} ${r.account.name}`.toLowerCase().includes(term)) : all;
+    const term = searchable(filter.trim());
+    return term ? all.filter((r) => searchable(`${r.account.code} ${r.account.name}`).includes(term)) : all;
   }, [tree.data, filter]);
   const manage = can('accounting.account.manage');
   const actions: DocAction<Account>[] = [

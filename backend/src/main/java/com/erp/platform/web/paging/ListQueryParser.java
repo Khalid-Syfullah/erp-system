@@ -3,6 +3,7 @@ package com.erp.platform.web.paging;
 import com.erp.platform.web.ApiException;
 import com.erp.platform.web.FieldViolation;
 import java.math.BigDecimal;
+import java.text.Normalizer;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
@@ -161,7 +162,8 @@ public final class ListQueryParser {
                     FieldViolation.atParameter("q", "UNKNOWN_PARAMETER", "search is not supported by this list"));
             return null;
         }
-        String trimmed = value.strip();
+        // NFC: Bangla (and other scripts) typed with combining marks matches the stored NFC text.
+        String trimmed = Normalizer.normalize(value.strip(), Normalizer.Form.NFC);
         if (trimmed.length() < MIN_SEARCH_LENGTH
                 || trimmed.length() > MAX_TEXT_LENGTH
                 || hasControlCharacter(trimmed)) {
@@ -238,7 +240,7 @@ public final class ListQueryParser {
 
     private static @Nullable Object parseValue(
             String parameter, FilterSpec spec, String raw, List<FieldViolation> violations) {
-        String value = raw.strip();
+        String value = Normalizer.normalize(raw.strip(), Normalizer.Form.NFC);
         Object parsed = switch (spec.type()) {
             case STRING ->
                 value.isEmpty() || value.length() > MAX_TEXT_LENGTH || hasControlCharacter(value) ? null : value;

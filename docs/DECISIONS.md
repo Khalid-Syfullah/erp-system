@@ -911,7 +911,7 @@ The Phase 11 brief asked for the ERP frontend on the existing APIs: navigation f
 - **No duplicated business rules.** Prices, discounts, taxes, totals, balances, available stock, credit exposure and allocation validity come from the server (the sales editor's "Calculate prices" calls `POST {c}/pricing/quote`). The UI only sums entered figures for display (journal debits and credits, allocation amounts) with decimal.js, pre-fills a line's unit and tax code from the product, and validates shapes (required, number format, length). Server field errors are attached to the inputs by their JSON pointers.
 - **Patterns.** A master-data page (list, drawer form, activate/deactivate), a document page (header, state badge, state actions with confirmation and reason, lines, server totals, taxes, settlement) with draft editors (`LinesEditor`), touch-friendly receipt, delivery and count screens (large inputs, card rows, no horizontal scroll at tablet width), an audit history drawer (`GET {c}/audit-log?filter[entityType]&filter[entityId]`, for `admin.audit.read`), and an attachments panel over a storage adapter.
 - **Attachments.** API.md §16's generic `{c}/files` and `…/{id}/attachments` endpoints are not implemented by the backend, so document attachments are not offered; the attachments panel serves the HR employee documents API (upload with type and expiry, audited download, removal). Document attachments come with their endpoints (Phase 12 backlog).
-- **i18n and formatting.** Every visible string comes from a typed English catalogue (`src/i18n/en.ts`); enum values fall back to a humanized label so unknown values from newer servers still display (API.md §2). Numbers, amounts (the currency's minor units, ledger digits kept when significant) and dates use `Intl` in the user's locale and time zone (`/me`); decimal strings are never converted to binary floats, and decimal input is parsed from the user's locale into canonical strings.
+- **i18n and formatting.** Every visible string comes from a typed English catalogue (`src/i18n/en.ts`; ADR-043 adds Bangla as the default language); enum values fall back to a humanized label so unknown values from newer servers still display (API.md §2). Numbers, amounts (the currency's minor units, ledger digits kept when significant) and dates use `Intl` in the user's locale and time zone (`/me`); decimal strings are never converted to binary floats, and decimal input is parsed from the user's locale into canonical strings.
 - **Report centre.** Parameter forms are generated from the catalogue (`GET {c}/reports`), results use the report's server-side sort and keyset pages with first-page totals, a bar chart shows the first amount by the first text column (one accent colour, sorted, labelled values, as an accessible list), exports are queued and polled, saved reports reopen with their parameters in the URL; Accounting's statements have their own layouts.
 - **Accessibility.** WCAG 2.2 AA: landmarks and a skip link, labelled controls with error text tied by `aria-describedby`, `aria-sort` on sortable headers, arrow-key navigation between table rows, focus-trapping dialogs, status text with colour as reinforcement only (contrast-checked tokens in light and dark themes), reduced-motion support. Every page reachable from each seeded user's navigation, every detail page tab and the first record of every document list are scanned with axe (`e2e/smoke.spec.ts`); serious and critical violations fail the suite.
 - **Security headers.** `frontend/security-headers.mjs` is the source of the SPA headers of SECURITY.md §10.1: `vite preview` sends them, the web image (`infra/docker/frontend.Dockerfile`, nginx `infra/docker/nginx/spa.conf`, compose service `web`) sends them for the application (not for the proxied API, which keeps its own) with `no-cache` for `index.html` and immutable hashed assets, and `tests/security-headers.test.ts` checks the nginx configuration against the source. `e2e/security-headers.spec.ts` checks the served headers and runs the application under the CSP (no violations) against the production build. Builds write hidden source maps (not referenced from the bundles).
@@ -948,6 +948,43 @@ A production-readiness audit of the whole repository (architecture, data, securi
 - A branch-restricted administrator can no longer grant or revoke company-wide roles; a company-wide administrator does that.
 - A cancellation racing a posting is answered `409 RESOURCE_BUSY` and can be retried.
 - Not addressed by the audit (DEVELOPMENT_PLAN.md Phase 12 deliverables that remain open): load tests against the ARCHITECTURE.md §10 targets at full volume, the restore and failover drills, deployment manifests (`infra/deploy`), alert rules, runbooks, the data migration toolkit, SAST, SBOM, DAST and the external penetration test.
+
+### ADR-043 — Bangla as the default language, with English as the secondary and fallback language (Accepted, Phase 12)
+
+**Context**
+
+The ERP is for organizations in Bangladesh. People there work in Bangla, while the v1 interface was English only (ARCHITECTURE.md §6.10, "UI is English in v1; all strings are externalized"). The application has to be usable in Bangla from the first visit. Users who prefer English must keep it on every device, and localization must not change any value, identifier, calculation or API contract.
+
+**Decision**
+
+- **Two catalogs, one framework.**
+  - The web application ships Bangla (`bn-BD`, `src/i18n/bn.ts`) and English (`en`, `src/i18n/en.ts`). Bangla is the default, and English is the fallback for any missing message.
+  - Components keep using `t()`, and no Bangla text is written in a component.
+  - The language is fixed at load, so a switch reloads the page (docs/LOCALIZATION.md).
+- **The profile `locale` is an explicit choice or nothing.**
+  - `auth.users.locale` becomes nullable without a default. `null` means "not chosen", and `PATCH /api/v1/me` and `PATCH /api/v1/admin/users/{id}` accept `null`.
+  - The old `NOT NULL DEFAULT 'en'` made every account look as if it had chosen English, which would have overridden the Bangla default forever. Migration `V202610120900__auth__optional_locale.sql` therefore clears the stored `'en'`. It was the default and not a language choice, because the interface had only one language. Other values that users set for formatting (such as `en-GB`) are kept.
+  - Order of precedence: the profile's choice (every device), then the browser's saved choice, then Bangla. A choice made before sign-in is written to the profile at the next sign-in.
+- **Display only.** API values, enum values, error codes, identifiers and data keep their English or ASCII form.
+  - Server-provided English labels (reports, dashboards, roles, permissions) are translated in the frontend by their exact text (`serverText`), so the API and the seed data stay as they are.
+  - In Bangla, a field error's text comes from its code; in English the server's message is shown.
+- **Bangladeshi formatting.**
+  - In Bangla, numbers use Bengali digits and the lakh grouping (`Intl` `bn-BD`), and the currency symbol is placed first (`৳২৫,০০০.০০`, a presentation choice over CLDR's trailing symbol).
+  - Amounts stay decimal strings, and only their presentation changes.
+  - Decimal input also accepts Bengali digits.
+  - A profile locale refines formatting only within the running language.
+- **Unicode NFC.** The server stores text fields in NFC (`@RawText` excluded) and normalizes `q` and text filters. Bangla letters with two encodings (য়, ড়, ঢ়) then compare equal in storage, uniqueness and search. API.md §5 already trims strings, and NFC is part of the same canonicalization.
+- **Font.** Noto Sans Bengali (SIL OFL) is self-hosted, as the CSP requires (`font-src 'self'`).
+
+**Consequences**
+
+- Existing users start in Bangla until they choose English once, after which their choice follows them.
+- The other end-to-end specs pin English in their storage state, and `e2e/localization.spec.ts` covers Bangla.
+- The manual keeps its English screenshots and tells the reader how to switch.
+- A new report, column, permission or role seeded with an English label shows in English in the Bangla interface until `bn.serverText` gets an entry for it.
+- The server's problem `detail` stays English. The Bangla interface shows the code's generic text instead.
+- Master data (chart of accounts, leave types, products) is shown as entered. The seeded STANDARD_SME chart and the demo company are in English.
+- Text stored before this change is not rewritten to NFC. Searches for such text still match unless it contains a decomposed sequence, which is rare in practice because keyboards and IMEs produce NFC.
 
 ---
 

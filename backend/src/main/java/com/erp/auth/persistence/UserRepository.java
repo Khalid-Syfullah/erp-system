@@ -115,7 +115,7 @@ public class UserRepository {
             UUID id,
             int expectedVersion,
             String displayName,
-            String locale,
+            @Nullable String locale,
             @Nullable String timezone,
             boolean systemAdmin,
             UUID actor,

@@ -18,7 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { t } from '@/i18n';
+import { searchable, serverText, t } from '@/i18n';
 import { useGlobalQuery, useInvalidateGlobal } from './use-global';
 
 type Role = Schemas['RoleResponse'];
@@ -80,7 +80,7 @@ export function AdminRolesPage() {
                         {role.code}
                       </Link>
                     </TableCell>
-                    <TableCell>{role.name}</TableCell>
+                    <TableCell>{serverText(role.name)}</TableCell>
                     <TableCell>
                       <StatusBadge status={role.isSystem ? 'ACTIVE' : 'OPEN'} label={role.isSystem ? t('admin.systemRole') : t('admin.customRole')} />
                     </TableCell>
@@ -135,7 +135,7 @@ function RoleEditor({ role, catalog }: { role: Role; catalog: Schemas['Permissio
   const modules = useMemo(() => {
     const groups = new Map<string, Schemas['PermissionResponse'][]>();
     for (const p of catalog) {
-      if (filter && !`${p.code} ${p.description}`.toLowerCase().includes(filter.toLowerCase())) continue;
+      if (filter && !searchable(`${p.code} ${serverText(p.description)} ${p.description}`).includes(searchable(filter))) continue;
       const list = groups.get(p.module ?? '') ?? [];
       list.push(p);
       groups.set(p.module ?? '', list);
@@ -168,7 +168,7 @@ function RoleEditor({ role, catalog }: { role: Role; catalog: Schemas['Permissio
   return (
     <div className="space-y-4">
       <PageHeader
-        title={role.name}
+        title={serverText(role.name)}
         description={<span className="font-mono">{role.code}</span>}
         badge={<StatusBadge status={role.isSystem ? 'ACTIVE' : 'OPEN'} label={role.isSystem ? t('admin.systemRole') : t('admin.customRole')} />}
         actions={
@@ -224,7 +224,7 @@ function RoleEditor({ role, catalog }: { role: Role; catalog: Schemas['Permissio
                     <label htmlFor={id} className="text-sm">
                       <span className="font-mono text-xs">{p.code}</span>
                       {p.isSensitive ? <StatusBadge status="WARNING" label={t('admin.sensitive')} className="ml-2" /> : null}
-                      <span className="block text-xs text-muted-foreground">{p.description}</span>
+                      <span className="block text-xs text-muted-foreground">{serverText(p.description)}</span>
                     </label>
                   </div>
                 );

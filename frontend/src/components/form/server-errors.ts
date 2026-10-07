@@ -1,5 +1,6 @@
 import type { FieldValues, Path, UseFormReturn } from 'react-hook-form';
 import { isApiError, pointerToPath, type FieldProblem } from '@/api/errors';
+import { fieldMessage } from '@/components/feedback/problem';
 
 function hasPath(values: unknown, path: string): boolean {
   if (path === '') return false;
@@ -33,7 +34,7 @@ export function applyServerErrors<T extends FieldValues>(
     const raw = pointerToPath(problem.pointer);
     const path = fieldMap[raw] ?? raw;
     if (hasPath(values, path)) {
-      form.setError(path as Path<T>, { type: 'server', message: problem.message }, { shouldFocus: !focused });
+      form.setError(path as Path<T>, { type: 'server', message: fieldMessage(problem) }, { shouldFocus: !focused });
       focused = true;
     } else {
       unmapped.push(problem);

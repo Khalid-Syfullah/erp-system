@@ -26,8 +26,8 @@ import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { enumLabel, t } from '@/i18n';
-import { compareDecimals, formatDateTime, formatMoney, startOfMonthIso, todayIso } from '@/lib/format';
+import { enumLabel, serverText, t, tryT } from '@/i18n';
+import { compareDecimals, formatDateTime, formatDecimal, formatMoney, startOfMonthIso, todayIso } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { STATEMENTS, StatementView } from './statements';
 
@@ -75,7 +75,7 @@ function ParameterInput({ parameter, value, onChange }: { parameter: Parameter; 
   const id = `param-${parameter.name}`;
   const label = (
     <Label htmlFor={id} id={`${id}-label`}>
-      {parameter.description || parameter.name}
+      {serverText(parameter.description) || parameter.name}
       {parameter.required ? <span className="text-destructive" aria-hidden> *</span> : null}
     </Label>
   );
@@ -140,9 +140,10 @@ function Cell({ column, value }: { column: Column; value: unknown }) {
     case 'BOOLEAN':
       return <>{value ? t('common.yes') : t('common.no')}</>;
     case 'INTEGER':
-      return <span className="tabular">{String(value)}</span>;
+      return <span className="tabular">{formatDecimal(String(value))}</span>;
     default:
-      return <>{typeof value === 'string' && /^[A-Z][A-Z_]+$/.test(value) ? enumLabel(value) : String(value)}</>;
+      // Enumeration values get their label; any other text (codes, SKUs, names) is shown as it is.
+      return <>{(typeof value === 'string' && /^[A-Z][A-Z_]+$/.test(value) ? tryT(`enums.${value}`) : undefined) ?? String(value)}</>;
   }
 }
 
@@ -218,7 +219,7 @@ function ReportRunner({ report, search }: { report: Report; search: Record<strin
       .map((r) => ({ label: String(r[category.key!] ?? ''), value: String(r[measure.key!]) }))
       .sort((a, b) => compareDecimals(b.value, a.value))
       .slice(0, 10);
-    return { data, title: t('rep.chartLabel', { value: measure.label, category: category.label, count: data.length }) };
+    return { data, title: t('rep.chartLabel', { value: serverText(measure.label), category: serverText(category.label), count: data.length }) };
   }, [rows, columns, statement]);
 
   const parameters = Object.fromEntries(Object.entries(submitted ?? values).filter(([, v]) => v !== null && v !== '')) as Record<string, string>;
@@ -226,8 +227,8 @@ function ReportRunner({ report, search }: { report: Report; search: Record<strin
     <div className="space-y-4">
       <PageHeader
         breadcrumbs={<BackLink to={`/c/${companyId}/reports`} label={t('rep.centreTitle')} />}
-        title={report.name}
-        description={report.description}
+        title={serverText(report.name)}
+        description={serverText(report.description)}
         actions={
           <>
             <Button variant="outline" onClick={() => setSaving(true)}>
@@ -282,7 +283,7 @@ function ReportRunner({ report, search }: { report: Report; search: Record<strin
             ) : (
               <div className="overflow-x-auto" aria-busy={query.isFetching || undefined}>
                 <Table>
-                  <caption className="sr-only">{report.name}</caption>
+                  <caption className="sr-only">{serverText(report.name)}</caption>
                   <TableHeader>
                     <TableRow>
                       {columns.map((c) => {
@@ -298,11 +299,11 @@ function ReportRunner({ report, search }: { report: Report; search: Record<strin
                                   setSort(sorted && !sorted.descending ? `-${c.key}` : c.key!);
                                 }}
                               >
-                                {c.label}
+                                {serverText(c.label)}
                                 {sorted ? (sorted.descending ? <ArrowDown className="size-3.5" aria-hidden /> : <ArrowUp className="size-3.5" aria-hidden />) : <ArrowUpDown className="size-3.5 opacity-40" aria-hidden />}
                               </button>
                             ) : (
-                              c.label
+                              serverText(c.label)
                             )}
                           </TableHead>
                         );

@@ -1,5 +1,6 @@
 package com.erp.platform.json;
 
+import java.text.Normalizer;
 import tools.jackson.core.JsonParser;
 import tools.jackson.core.JsonToken;
 import tools.jackson.databind.BeanProperty;
@@ -10,8 +11,10 @@ import tools.jackson.databind.deser.std.StdScalarDeserializer;
 /**
  * Reads strings only from JSON strings (no numbers or booleans coerced to text), trims surrounding
  * whitespace and rejects control characters other than tab, line feed and carriage return
- * (API.md §7). NUL in particular is rejected because PostgreSQL text cannot store it. Fields marked
- * {@link RawText} keep their exact value (no trimming).
+ * (API.md §7). NUL in particular is rejected because PostgreSQL text cannot store it. Text is stored
+ * in Unicode NFC, so that Bangla typed with different code-point sequences (য় as one or two code
+ * points) is stored, compared and searched alike (docs/LOCALIZATION.md). Fields marked {@link RawText}
+ * keep their exact value (no trimming, no normalization).
  */
 final class SanitizingStringDeserializer extends StdScalarDeserializer<String> {
 
@@ -41,7 +44,7 @@ final class SanitizingStringDeserializer extends StdScalarDeserializer<String> {
         if (containsForbiddenCharacter(value)) {
             return context.reportInputMismatch(this, "String contains control characters");
         }
-        return trim ? value.strip() : value;
+        return trim ? Normalizer.normalize(value.strip(), Normalizer.Form.NFC) : value;
     }
 
     static boolean containsForbiddenCharacter(String value) {

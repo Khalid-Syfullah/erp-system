@@ -13,7 +13,7 @@ import { EmptyState, ErrorState, LoadingState } from '@/components/feedback/stat
 import { notify } from '@/components/feedback/notify';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { enumLabel, t, tryT } from '@/i18n';
+import { enumLabel, searchable, serverText, t, tryT } from '@/i18n';
 import { enums } from '@/lib/enums';
 import { DashboardPage } from '@/modules/dashboard/dashboard-page';
 import { useReportCatalogue } from './report-run-page';
@@ -26,10 +26,12 @@ export function ReportCentrePage() {
   const catalogue = useReportCatalogue();
   const [filter, setFilter] = useState('');
   const groups = useMemo(() => {
-    const term = filter.trim().toLowerCase();
+    const term = searchable(filter.trim());
     const map = new Map<string, Schemas['Report'][]>();
     for (const r of catalogue.data ?? []) {
-      if (term && !`${r.name} ${r.description} ${r.code}`.toLowerCase().includes(term)) continue;
+      // Both languages match: the shown (Bangla) names and the English ones people may know.
+      const text = searchable(`${serverText(r.name)} ${serverText(r.description)} ${r.name} ${r.description} ${r.code}`);
+      if (term && !text.includes(term)) continue;
       const list = map.get(r.module ?? '') ?? [];
       list.push(r);
       map.set(r.module ?? '', list);
@@ -56,8 +58,8 @@ export function ReportCentrePage() {
                   >
                     <FileBarChart2 className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden />
                     <span>
-                      <span className="block font-medium">{r.name}</span>
-                      <span className="block text-xs text-muted-foreground">{r.description}</span>
+                      <span className="block font-medium">{serverText(r.name)}</span>
+                      <span className="block text-xs text-muted-foreground">{serverText(r.description)}</span>
                     </span>
                   </Link>
                 </li>

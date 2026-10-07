@@ -99,9 +99,9 @@ public class AccountService {
         MergePatch.Member<String> displayName = patch.text("displayName", true, 200);
         MergePatch.Member<String> locale = patch.text(
                 "locale",
-                true,
+                false,
                 5,
-                l -> l.matches("^[a-z]{2}(-[A-Z]{2})?$") ? null : "must be a locale such as en or en-GB");
+                l -> l.matches("^[a-z]{2}(-[A-Z]{2})?$") ? null : "must be a locale such as bn-BD, en or en-GB");
         MergePatch.Member<String> timezone = patch.text("timezone", false, 64, UserAdministrationService::zoneError);
         patch.throwIfInvalid();
         if (!users.updateProfile(

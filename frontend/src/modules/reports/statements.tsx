@@ -6,7 +6,7 @@ import { StatusBadge } from '@/components/common/status-badge';
 import { DateText, Money, Text } from '@/components/common/values';
 import { EntryLink } from '@/modules/accounting/entries';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { t } from '@/i18n';
+import { serverText, t } from '@/i18n';
 import { cn } from '@/lib/utils';
 
 export const STATEMENTS = new Set(['trial-balance', 'general-ledger', 'profit-and-loss', 'balance-sheet', 'ar-ageing', 'ap-ageing', 'cash-book']);
@@ -39,7 +39,7 @@ function StatementTable({ caption, head, children, foot }: { caption: string; he
 function TrialBalanceView({ data }: { data: Schemas['TrialBalance'] }) {
   return (
     <StatementTable
-      caption="Trial balance"
+      caption={serverText('Trial balance')}
       head={
         <TableRow>
           <TableHead>{t('acc.account')}</TableHead>
@@ -140,7 +140,7 @@ function ProfitAndLossView({ data }: { data: Schemas['ProfitAndLoss'] }) {
   const comparison = !!data.compareFrom;
   return (
     <StatementTable
-      caption="Profit and loss"
+      caption={serverText('Income statement')}
       head={
         <TableRow>
           <TableHead>{t('acc.account')}</TableHead>
@@ -167,7 +167,7 @@ function BalanceSheetView({ data }: { data: Schemas['BalanceSheet'] }) {
     <div className="space-y-3">
       <StatusBadge status={data.balanced ? 'BALANCED' : 'FAILED'} label={data.balanced ? t('rep.statement.balanced') : t('rep.statement.notBalanced')} />
       <StatementTable
-        caption="Balance sheet"
+        caption={serverText('Balance sheet')}
         head={
           <TableRow>
             <TableHead>{t('acc.account')}</TableHead>
@@ -189,10 +189,10 @@ function BalanceSheetView({ data }: { data: Schemas['BalanceSheet'] }) {
 
 const buckets = ['current', 'days1To30', 'days31To60', 'days61To90', 'over90', 'total'] as const;
 
-function AgeingView({ data }: { data: Schemas['Ageing'] }) {
+function AgeingView({ data, caption }: { data: Schemas['Ageing']; caption: string }) {
   return (
     <StatementTable
-      caption="Ageing"
+      caption={serverText(caption)}
       head={
         <TableRow>
           <TableHead>{t('acc.partner')}</TableHead>
@@ -234,21 +234,22 @@ export function StatementView({ code, data }: { code: string; data: unknown }) {
       return (
         <div className="space-y-2">
           <p className="text-sm font-medium"><AccountCell account={gl.account} /></p>
-          <LedgerView opening={gl.opening} closing={gl.closing} rows={gl.rows ?? []} caption="General ledger" />
+          <LedgerView opening={gl.opening} closing={gl.closing} rows={gl.rows ?? []} caption={serverText('General ledger')} />
         </div>
       );
     }
     case 'cash-book': {
       const book = data as Schemas['CashBook'];
-      return <LedgerView opening={book.opening} closing={book.closing} rows={book.transactions ?? []} caption="Cash book" />;
+      return <LedgerView opening={book.opening} closing={book.closing} rows={book.transactions ?? []} caption={serverText('Cash book')} />;
     }
     case 'profit-and-loss':
       return <ProfitAndLossView data={data as Schemas['ProfitAndLoss']} />;
     case 'balance-sheet':
       return <BalanceSheetView data={data as Schemas['BalanceSheet']} />;
     case 'ar-ageing':
+      return <AgeingView data={data as Schemas['Ageing']} caption="Accounts receivable ageing" />;
     case 'ap-ageing':
-      return <AgeingView data={data as Schemas['Ageing']} />;
+      return <AgeingView data={data as Schemas['Ageing']} caption="Accounts payable ageing" />;
     default:
       return null;
   }

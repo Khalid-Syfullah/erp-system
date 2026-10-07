@@ -19,7 +19,7 @@ public record AuthUser(
         @Nullable OffsetDateTime lockedUntil,
         @Nullable OffsetDateTime lastLoginAt,
         boolean systemAdmin,
-        String locale,
+        @Nullable String locale,
         @Nullable String timezone,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,

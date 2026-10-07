@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { t } from "@/i18n"
 import { Command as CommandPrimitive } from "cmdk"
 import { cn } from "@/lib/utils"
 
@@ -34,8 +35,8 @@ function Command({
 }
 
 function CommandDialog({
-  title = "Command Palette",
-  description = "Search for a command to run...",
+  title = t('shell.commandHint'),
+  description = t('shell.commandPlaceholder'),
   children,
   className,
   showCloseButton = false,

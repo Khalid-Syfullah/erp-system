@@ -8,7 +8,7 @@ import { useCompany } from '@/auth/company';
 import { Button } from '@/components/ui/button';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { t } from '@/i18n';
+import { searchable, t } from '@/i18n';
 import { useDebounced } from '@/lib/use-debounced';
 import { cn } from '@/lib/utils';
 import type { EntitySource } from './entities';
@@ -197,13 +197,13 @@ export function EntityPicker<T>({
 
   const options = useMemo(() => {
     const base = source.mode === 'all' ? all.items : (remote.data?.data ?? []);
-    const term = source.mode === 'all' ? search.trim().toLowerCase() : '';
+    const term = source.mode === 'all' ? searchable(search.trim()) : '';
     return base
       .filter((item) => (source.selectable ? source.selectable(item) : true))
       .filter((item) => (filter ? filter(item) : true))
       .filter((item) => {
         if (!term) return true;
-        return `${source.label(item)} ${source.description?.(item) ?? ''}`.toLowerCase().includes(term);
+        return searchable(`${source.label(item)} ${source.description?.(item) ?? ''}`).includes(term);
       })
       .slice(0, 100);
   }, [source, all.items, remote.data, search, filter]);

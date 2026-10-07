@@ -239,6 +239,24 @@ class UserAdministrationIntegrationTest extends IntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.displayName").value("Me Myself"));
 
+        // The language (LOCALIZATION.md): none chosen until the user picks one, which the web app then uses.
+        mvc.perform(get("/api/v1/me").cookie(session))
+                .andExpect(jsonPath("$.user.locale").value(org.hamcrest.Matchers.nullValue()));
+        mvc.perform(unsafe(patch("/api/v1/me"))
+                        .cookie(session)
+                        .header("If-Match", "W/\"1\"")
+                        .contentType("application/merge-patch+json")
+                        .content("{\"locale\":\"bn-BD\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.locale").value("bn-BD"));
+        mvc.perform(unsafe(patch("/api/v1/me"))
+                        .cookie(session)
+                        .header("If-Match", "W/\"2\"")
+                        .contentType("application/merge-patch+json")
+                        .content("{\"locale\":null}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.locale").value(org.hamcrest.Matchers.nullValue()));
+
         mvc.perform(unsafe(post("/api/v1/me/reauthenticate"))
                         .cookie(session)
                         .contentType(MediaType.APPLICATION_JSON)

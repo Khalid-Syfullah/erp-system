@@ -389,7 +389,7 @@ auth.users (
   failed_login_count integer NOT NULL DEFAULT 0, locked_until timestamptz NULL,
   last_login_at timestamptz NULL,
   is_system_admin boolean NOT NULL DEFAULT false,   -- platform administration (SECURITY.md §4.5)
-  locale text NOT NULL DEFAULT 'en', timezone text NULL,
+  locale text NULL, timezone text NULL,            -- locale: the user's explicit language choice (bn-BD, en, en-GB); NULL = none (ADR-043)
   + std (without company_id),
   CHECK (user_type = 'HUMAN' OR password_hash IS NULL))
 

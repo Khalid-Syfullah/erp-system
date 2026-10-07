@@ -321,7 +321,7 @@ export function DataTable<T>({
             </SelectContent>
           </Select>
         </div>
-        <nav className="flex items-center gap-2" aria-label="Pagination">
+        <nav className="flex items-center gap-2" aria-label={t('common.pagination')}>
           <span className="text-muted-foreground" aria-live="polite">
             {t('common.pageOf', { page: cursors.length })}
           </span>

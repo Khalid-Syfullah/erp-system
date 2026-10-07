@@ -34,7 +34,7 @@ Regenerate the types after an API change; a breaking change then fails `npm run 
 | `src/components/` | `data/` (data table, entity pickers and names), `form/` (fields, decimal and date inputs, server-error mapping), `overlay/` (modal, drawer, confirm and form dialogs), `feedback/`, `document/` (state actions, document layout, lines editor, audit history, attachments), `master/` (master-data and settings pages), `common/` |
 | `src/modules/` | Screens per module: dashboard, org, hr, inventory, procurement, sales, accounting, payroll, reports, admin, account |
 | `src/routes/` | File routes (TanStack Router); `/c/$companyId/...` for company pages, `/admin/...` for system administration |
-| `src/i18n/` | The typed message catalogue (English) |
+| `src/i18n/` | The typed message catalogues: Bangla (`bn.ts`, the default) and English (`en.ts`, the fallback); see [docs/LOCALIZATION.md](../docs/LOCALIZATION.md) |
 | `src/lib/` | Formatting of decimal strings, amounts and dates (`Intl`, decimal.js), enums, theme |
 | `e2e/` | Playwright: the seed, the critical flows, the smoke and accessibility pass, tablet screens, security headers |
 | `security-headers.mjs` | The SPA security headers (SECURITY.md §10.1), used by `vite preview` and checked against `infra/docker/nginx/spa.conf` |
@@ -43,7 +43,8 @@ Regenerate the types after an API change; a breaking change then fails `npm run 
 
 - The backend decides: permissions only hide navigation and actions, prices, taxes and totals are the
   server's, and every write invalidates the company's cached data. No optimistic UI for documents.
-- Every visible string comes from `src/i18n/en.ts`; unknown enum values display humanized.
+- Every visible string comes from the catalogues (`src/i18n/en.ts` and `bn.ts`); unknown enum values display humanized.
+- The language is Bangla unless the user chose English (`বাংলা | English`); identifiers, enum values and amounts' precision never change with it.
 - Money and quantities stay decimal strings (`formatMoney`, `formatDecimal`, `DecimalInput`); `parseFloat` is banned by lint.
 - `dangerouslySetInnerHTML` is banned by lint; the CSP allows scripts from the origin only.
 - Referenced records are shown with `EntityName`: 'all' sources load once per company, 'search' sources are

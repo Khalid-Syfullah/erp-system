@@ -32,6 +32,8 @@ async function as(browser: Browser, user: 'alice' | 'bob' | 'erin' | 'admin'): P
 let invoiceId = '';
 
 test('sign in and find your way', async ({ page, seed, companyPath }) => {
+  // The manual is written in English: its screenshots show the English interface (the first visit is Bangla).
+  await page.addInitScript(() => localStorage.setItem('erp.language', 'en'));
   await page.goto('/login');
   await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
   await shot(page, '01-sign-in');

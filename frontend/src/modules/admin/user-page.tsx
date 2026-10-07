@@ -18,7 +18,7 @@ import { ConfirmDialog } from '@/components/overlay/confirm-dialog';
 import { Modal } from '@/components/overlay/modal';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { t } from '@/i18n';
+import { serverText, t } from '@/i18n';
 import { useGlobalQuery, useInvalidateGlobal } from './use-global';
 
 type User = Schemas['UserResponse'];
@@ -229,7 +229,7 @@ function AssignmentsSection({ userId }: { userId: string }) {
             name="roleId"
             label={t('admin.role')}
             required
-            options={(roles.data?.data ?? []).map((r) => ({ value: r.id!, label: `${r.name} (${r.code})` }))}
+            options={(roles.data?.data ?? []).map((r) => ({ value: r.id!, label: `${serverText(r.name)} (${r.code})` }))}
           />
           <FieldGrid>
             <DateField name="validFrom" label={t('admin.validFrom')} />

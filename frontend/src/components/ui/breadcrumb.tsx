@@ -1,3 +1,4 @@
+import { t } from "@/i18n"
 import * as React from "react"
 import { cn } from "@/lib/utils"
 import { Slot } from "radix-ui"
@@ -105,7 +106,7 @@ function BreadcrumbEllipsis({
     >
       <MoreHorizontalIcon
       />
-      <span className="sr-only">More</span>
+      <span className="sr-only">{t('common.more')}</span>
     </span>
   )
 }

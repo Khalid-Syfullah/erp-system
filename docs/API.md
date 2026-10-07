@@ -179,7 +179,7 @@ Master data is never deleted once referenced. It is deactivated with `POST /…/
 - **Business validation** happens in domain and application code. It returns a specific `code`, or `VALIDATION_FAILED` with per-field errors when several rules fail.
 - Malformed JSON, wrong JSON types and unknown properties return **400 `BAD_REQUEST`** with a pointer. Values that parse but violate constraints return **422 `VALIDATION_FAILED`**.
 - Unknown JSON properties, duplicate keys and trailing content are **rejected** with `400`. Scalars are never coerced: `"5"` is not an integer, `1.5` is not an integer, and `"true"` is not a boolean. This prevents mass-assignment and catches client bugs. Read-only fields (`id`, `number`, `status`, totals, `version`, audit fields) are not part of create or update DTOs.
-- Strings are trimmed, then checked for max length. Control characters (C0 except tab, LF and CR; DEL; C1) are rejected in every string. Fields that must not contain line breaks enforce that with their own constraint.
+- Strings are trimmed and normalized to Unicode NFC (`@RawText` fields such as passwords excepted, ADR-043), then checked for max length. Control characters (C0 except tab, LF and CR; DEL; C1) are rejected in every string. Fields that must not contain line breaks enforce that with their own constraint.
 - Enums are case-sensitive and UPPER_SNAKE_CASE.
 
 ## 8. Lists: pagination, filtering, sorting and search
@@ -229,7 +229,7 @@ Response envelope:
 
 ### 8.4 Search
 
-`q=<text>` runs a quick search over the endpoint's documented search fields: number, code, name, SKU, barcode and partner name. It is case-insensitive and uses `pg_trgm` and prefix indexes. The minimum length is 2 characters.
+`q=<text>` runs a quick search over the endpoint's documented search fields: number, code, name, SKU, barcode and partner name. It is case-insensitive and uses `pg_trgm` and prefix indexes. The minimum length is 2 characters. The term and text filter values are normalized to NFC like stored text, so Bangla is found whichever encoding was typed (ADR-043).
 
 ## 9. Concurrency: ETag and If-Match
 
@@ -327,7 +327,7 @@ Notation: `{c}` = `/api/v1/companies/{companyId}`. **[A]** = requires `If-Match`
 | `POST /api/v1/auth/password/reset` `{token, newPassword}` | `204`; ends all sessions of the user | public, rate-limited |
 | `POST /api/v1/auth/invitations/accept` `{token, password}` | `204`; the account becomes ACTIVE | public, rate-limited |
 | `GET /api/v1/me` | `{user, mfaRequired, mfaEnrollmentRequired, companies[{id, code, displayName, permissions, branchScope}]}` (`branchScope` null = all branches) | authenticated |
-| `PATCH /api/v1/me` (merge patch) | Display name, locale, timezone | authenticated |
+| `PATCH /api/v1/me` (merge patch) | Display name, locale (the language choice: `bn-BD`, `en`, `en-GB`; `null` = not chosen, ADR-043), timezone | authenticated |
 | `GET /api/v1/companies` | Companies the caller has a valid assignment in (an API token: its company only, if restricted) | authenticated |
 | `POST /api/v1/me/password` `{currentPassword, newPassword}` | Change password: `204`, rotates this session, ends all others | browser session |
 | `POST /api/v1/me/reauthenticate` `{password}` | Step-up (SECURITY.md §3.3): `204`, rotates the session; valid for 5 minutes | browser session |

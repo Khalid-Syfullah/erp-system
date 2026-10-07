@@ -4,7 +4,13 @@
 // Intl.NumberFormat formats a numeric string exactly, and decimal.js does any arithmetic the UI
 // needs for display (sums of entered allocations, for instance). Business amounts (line totals,
 // taxes, balances) always come from the server (PRODUCT_SPEC.md G-7).
+//
+// Numbers, amounts and dates follow the interface language (docs/LOCALIZATION.md): Bangla uses bn-BD
+// (Bengali digits, lakh/crore grouping: ১,২৩,৪৫৬; ৳২৫,০০০.০০), English uses en. Only the presentation
+// changes: values, scales and rounding are the same in every language, and identifiers (numbers of
+// documents, SKUs, codes, account and phone numbers) are text and are never re-digitized.
 import Decimal from 'decimal.js';
+import { activeLocale, language, languageOf } from '@/i18n';
 
 export interface FormatSettings {
   locale: string;
@@ -12,15 +18,20 @@ export interface FormatSettings {
 }
 
 let settings: FormatSettings = {
-  locale: typeof navigator !== 'undefined' ? navigator.language || 'en-US' : 'en-US',
+  locale: activeLocale(),
   timeZone: undefined,
 };
 
 const cache = new Map<string, Intl.NumberFormat | Intl.DateTimeFormat>();
 
-/** Applies the signed-in user's locale and time zone (GET /me). */
+/**
+ * Applies the signed-in user's profile locale and time zone (GET /me). A profile locale refines the
+ * interface language (en-GB for English dates in British order) but never changes it: a locale of
+ * another language is ignored, so Bangla screens always show Bangla numbers.
+ */
 export function configureFormatting(next: Partial<FormatSettings>): void {
-  const locale = next.locale && isSupportedLocale(next.locale) ? next.locale : settings.locale;
+  const matches = next.locale && languageOf(next.locale) === language() && isSupportedLocale(next.locale);
+  const locale = matches ? next.locale! : activeLocale();
   const timeZone = next.timeZone && isSupportedTimeZone(next.timeZone) ? next.timeZone : settings.timeZone;
   if (locale !== settings.locale || timeZone !== settings.timeZone) {
     settings = { locale, timeZone };
@@ -128,16 +139,32 @@ export function formatMoney(
     return formatDecimal(value, { minimumFractionDigits: digits, maximumFractionDigits: significant });
   }
   try {
-    return numberFormat(`money|${currency}|${digits}|${significant}`, {
+    const format = numberFormat(`money|${currency}|${digits}|${significant}`, {
       style: 'currency',
       currency,
       minimumFractionDigits: digits,
       maximumFractionDigits: significant,
       roundingMode: 'halfExpand',
-    } as Intl.NumberFormatOptions).format(asNumeric(value));
+    } as Intl.NumberFormatOptions);
+    return language() === 'bn' ? symbolFirst(format.formatToParts(asNumeric(value))) : format.format(asNumeric(value));
   } catch {
     return `${formatDecimal(value, { minimumFractionDigits: digits })} ${currency}`;
   }
+}
+
+/**
+ * bn-BD writes the currency after the amount (২৫,০০০.০০৳); Bangladeshi usage puts the sign first
+ * (৳২৫,০০০.০০, -৳৫০০.০০). The parts are only reordered: digits and precision are Intl's.
+ */
+function symbolFirst(parts: Intl.NumberFormatPart[]): string {
+  const sign = parts.filter((p) => p.type === 'minusSign' || p.type === 'plusSign').map((p) => p.value).join('');
+  const symbol = parts.filter((p) => p.type === 'currency').map((p) => p.value).join('');
+  const amount = parts
+    .filter((p) => p.type !== 'minusSign' && p.type !== 'plusSign' && p.type !== 'currency')
+    .map((p) => p.value)
+    .join('')
+    .trim();
+  return `${sign}${symbol}${amount}`;
 }
 
 /** Scale without trailing zeros ("75.0000" → 0, "1.2340" → 3). */
@@ -163,12 +190,17 @@ export function separators(): { decimal: string; group: string } {
   };
 }
 
+/** Bengali digits (০–৯, as typed on a Bangla keyboard or shown in bn-BD inputs) as ASCII digits. */
+export function toAsciiDigits(text: string): string {
+  return text.replace(/[\u09E6-\u09EF]/g, (d) => String(d.charCodeAt(0) - 0x09e6));
+}
+
 /**
  * Parses what a user typed in a decimal field ("1,234.50", "1.234,50" in de-DE, "1 234,5") into the
  * API's canonical decimal string ("1234.50"). Returns null for anything that is not a plain number.
  */
 export function parseDecimalInput(text: string): string | null {
-  const trimmed = text.trim();
+  const trimmed = toAsciiDigits(text).trim();
   if (trimmed === '') return null;
   const { decimal, group } = separators();
   let normalized = trimmed.replace(/[\s\u00a0\u202f]/g, '');

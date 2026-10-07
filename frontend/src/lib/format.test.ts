@@ -30,8 +30,12 @@ describe('decimal formatting', () => {
     expect(parseDecimalInput(' 7 ')).toBe('7');
     expect(parseDecimalInput('abc')).toBeNull();
     expect(parseDecimalInput('')).toBeNull();
-    configureFormatting({ locale: 'de-DE' });
+    // A profile locale refines the interface language's formats (here English with comma decimals).
+    configureFormatting({ locale: 'en-DK' });
     expect(parseDecimalInput('1.234,50')).toBe('1234.5');
+    // A locale of another language never changes the interface language's formats.
+    configureFormatting({ locale: 'de-DE' });
+    expect(formatDecimal('1234.5')).toBe('1,234.5');
   });
 
   it('sums decimal strings exactly', () => {

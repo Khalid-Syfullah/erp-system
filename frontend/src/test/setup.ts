@@ -4,6 +4,10 @@ import { afterEach } from 'vitest';
 
 afterEach(() => cleanup());
 
+// Component and client tests assert English texts: they run with English as the saved choice. The
+// localization tests (src/i18n/*.test.ts) switch languages themselves; Bangla is the product default.
+if (typeof localStorage !== 'undefined') localStorage.setItem('erp.language', 'en');
+
 // jsdom lacks these browser APIs used by Radix UI and the theme (node-environment tests skip them).
 if (typeof window !== 'undefined' && !window.matchMedia) {
   window.matchMedia = (query: string) =>

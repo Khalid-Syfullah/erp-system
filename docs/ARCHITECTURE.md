@@ -471,7 +471,7 @@ A failure raises an alert and an audit entry. These jobs are how silent drift wo
 - Business dates (document date, accounting date, due date) use `date`.
 - Each company has an IANA `timezone`. "Today" for a company is computed in that timezone through `platform.time.BusinessCalendar`.
 - The API uses ISO 8601. Locale-specific number and date formatting happens only in the frontend.
-- The UI is English in v1; all strings are externalized so the UI is ready for i18n.
+- The UI is bilingual (ADR-043): Bangla (bn-BD) by default, English as the secondary and fallback language. All strings are externalized in typed catalogs. Bangla formatting uses Bengali digits, the lakh grouping and `৳`. Identifiers, enum values and the API stay English. See [LOCALIZATION.md](LOCALIZATION.md).
 
 ### 6.11 Files and documents
 

@@ -27,7 +27,7 @@ final class AuthResponses {
             String status,
             boolean isSystemAdmin,
             boolean mfaEnabled,
-            String locale,
+            @Nullable String locale,
             @Nullable String timezone,
             @Nullable OffsetDateTime lastLoginAt,
             OffsetDateTime createdAt,

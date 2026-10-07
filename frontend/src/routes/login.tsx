@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { api, ensureCsrfToken } from '@/api/client';
 import { hasCode } from '@/api/errors';
 import { AuthLayout } from '@/auth/auth-layout';
+import { finishingSignIn } from '@/auth/language';
 import { safeRedirect } from '@/auth/redirect';
 import { meQuery } from '@/auth/session';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -45,12 +46,10 @@ function LoginPage() {
 
   const finish = async (result: LoginResult | undefined) => {
     queryClient.removeQueries();
-    await queryClient.fetchQuery(meQuery);
-    if (result?.mfaEnrollmentRequired) {
-      await navigate({ to: '/mfa-setup' });
-    } else {
-      await navigate({ to: safeRedirect(search.redirect) as '/' });
-    }
+    const to = result?.mfaEnrollmentRequired ? '/mfa-setup' : safeRedirect(search.redirect);
+    // The user's saved language may differ from this browser's: the page then reloads into it at `to`.
+    if (await finishingSignIn(to, () => queryClient.fetchQuery(meQuery))) return;
+    await navigate({ to: to as '/' });
   };
 
   return (

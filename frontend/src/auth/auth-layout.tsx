@@ -1,9 +1,11 @@
 import type { ReactNode } from 'react';
+import { LanguageSwitcher } from './language';
 
 /** The centered card of the sign-in pages. */
 export function AuthLayout({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
   return (
-    <main id="main" className="flex min-h-svh items-center justify-center bg-muted/40 p-4">
+    <main id="main" className="relative flex min-h-svh items-center justify-center bg-muted/40 p-4">
+      <LanguageSwitcher className="absolute top-4 right-4" />
       <div className="w-full max-w-sm space-y-6 rounded-xl border bg-card p-6 shadow-sm">
         <div className="space-y-1.5 text-center">
           <div className="mx-auto flex size-10 items-center justify-center rounded-lg bg-primary font-semibold text-primary-foreground" aria-hidden>
