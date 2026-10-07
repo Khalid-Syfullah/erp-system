@@ -102,3 +102,21 @@ test.describe('document pages (alice)', () => {
     }
   });
 });
+
+// The page search (Ctrl K / "Search pages") opens, filters the navigation and goes to the chosen page.
+test.describe('page search (alice)', () => {
+  test.use({ storageState: storage('alice') });
+  test('finds and opens a page', async ({ page, problems, companyPath }) => {
+    await page.goto(companyPath(''));
+    await expect(page.locator('main h1').first()).toBeVisible();
+    await page.keyboard.press('Control+k');
+    await page.getByPlaceholder('Go to…').fill('purchase orders');
+    await page.getByRole('option', { name: /Purchase orders/ }).first().click();
+    await expect(page).toHaveURL(/\/procurement\/orders$/);
+    await expect(page.locator('main h1').first()).toHaveText('Purchase orders');
+    await page.getByRole('button', { name: /Search pages/ }).first().click();
+    await expect(page.getByPlaceholder('Go to…')).toBeVisible();
+    await expectAccessible(page, 'page search');
+    expect(problems.console).toEqual([]);
+  });
+});

@@ -17,6 +17,8 @@ npm run preview        # serves dist/ with the production security headers on :4
 npm run api:generate   # src/api/schema.d.ts from ../backend/build/openapi/openapi.json
 npm run api:check      # fails when schema.d.ts is stale (CI)
 npm run test:e2e       # Playwright (needs the local stack, see below)
+npm run demo:code alice  # the current two-step code of a seeded demo user (alice, bob, admin)
+npm run docs:screenshots # re-captures the user manual's screenshots (docs/manual/images) from the running demo
 ```
 
 The OpenAPI document is written by the backend's `OpenApiContractTest` (part of `./gradlew build`).

@@ -20,6 +20,7 @@ import { rememberCompany } from '@/auth/last-company';
 import { permissionsOf } from '@/auth/permissions';
 import { Button } from '@/components/ui/button';
 import {
+  Command,
   CommandDialog,
   CommandEmpty,
   CommandGroup,
@@ -273,6 +274,8 @@ function CommandMenu() {
         <Search aria-hidden />
       </Button>
       <CommandDialog open={open} onOpenChange={setOpen} title={t('shell.commandHint')} description={t('shell.commandPlaceholder')}>
+        {/* The dialog does not provide cmdk's root: without <Command>, opening it crashed the app. */}
+        <Command>
         <CommandInput placeholder={t('shell.commandPlaceholder')} />
         <CommandList>
           <CommandEmpty>{t('common.noOptions')}</CommandEmpty>
@@ -293,6 +296,7 @@ function CommandMenu() {
             </CommandGroup>
           ))}
         </CommandList>
+        </Command>
       </CommandDialog>
     </>
   );
