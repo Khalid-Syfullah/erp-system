@@ -31,6 +31,7 @@ import org.springframework.stereotype.Repository;
 public class VariantRepository {
 
     private static final ListBinding BINDING = ListBinding.builder(InventoryListings.VARIANTS)
+            .field("id", PRODUCT_VARIANTS.ID)
             .field("sku", PRODUCT_VARIANTS.SKU)
             .field("name", PRODUCT_VARIANTS.NAME)
             .field("createdAt", PRODUCT_VARIANTS.CREATED_AT)

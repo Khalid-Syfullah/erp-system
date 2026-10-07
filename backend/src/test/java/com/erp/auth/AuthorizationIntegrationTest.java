@@ -310,6 +310,52 @@ class AuthorizationIntegrationTest extends IntegrationTest {
     }
 
     @Test
+    void branchRestrictedCompanyAdministratorsGrantOnlyWithinTheirBranches() throws Exception {
+        UUID company = auth.company();
+        UUID north = auth.branch(company, "NORTH");
+        UUID south = auth.branch(company, "SOUTH");
+        TestUser companyAdmin = auth.enrollMfa(auth.user());
+        auth.assign(companyAdmin, "COMPANY_ADMIN", company, north);
+        TestUser colleague = auth.user();
+        Cookie session = auth.login(companyAdmin);
+        String assignments = "/api/v1/companies/" + company + "/role-assignments";
+        UUID branchReader = auth.customRole("org.branch.read");
+        java.util.function.Function<String, String> body = branches ->
+                "{\"userId\":\"" + colleague.id() + "\",\"roleId\":\"" + branchReader + "\"" + branches + "}";
+
+        // All branches (no branch list) or another branch would widen the administrator's own reach.
+        mvc.perform(unsafe(post(assignments))
+                        .cookie(session)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body.apply("")))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("PRIVILEGE_ESCALATION"));
+        mvc.perform(unsafe(post(assignments))
+                        .cookie(session)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body.apply(",\"branchIds\":[\"" + north + "\",\"" + south + "\"]")))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("PRIVILEGE_ESCALATION"));
+        // Within the administrator's branch: allowed, and removable again.
+        String created = mvc.perform(unsafe(post(assignments))
+                        .cookie(session)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body.apply(",\"branchIds\":[\"" + north + "\"]")))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        // An assignment for all branches made by someone else cannot be removed by the restricted admin.
+        UUID wide = auth.assign(colleague, auth.customRole("org.branch.read"), company);
+        mvc.perform(unsafe(delete(assignments + "/" + wide)).cookie(session))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("PRIVILEGE_ESCALATION"));
+        mvc.perform(unsafe(delete(assignments + "/" + com.jayway.jsonpath.JsonPath.read(created, "$.id")))
+                        .cookie(session))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
     void systemRolesAreImmutableAndCustomRolesCannotHoldGlobalPermissions() throws Exception {
         TestUser admin = auth.systemAdmin();
         Cookie session = auth.login(admin);

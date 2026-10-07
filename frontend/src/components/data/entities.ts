@@ -1,6 +1,6 @@
 // Reference data sources. Responses carry IDs (customerId, warehouseId …), so screens resolve labels
 // through these sources: small master data is loaded once per company ('all'), large data is searched
-// with `q` and fetched one record at a time ('search').
+// with `q` and fetched by ID ('search'); IDs shown together are fetched together (`batch`).
 import { api, type CompanyApi, type Query, type Schemas } from '@/api/client';
 import type { Filters, Page } from '@/api/list';
 import { formatDecimal } from '@/lib/format';
@@ -15,6 +15,8 @@ export interface EntitySource<T = unknown> {
   // Method signatures (bivariant), so a source of a concrete type is usable where any source is.
   list(api: CompanyApi, query: Query, signal?: AbortSignal): Promise<Page<T>>;
   get?(api: CompanyApi, id: string, signal?: AbortSignal): Promise<T>;
+  /** Several records by ID in one request (`filter[id][in]`, at most 100); preferred over `get` for display. */
+  batch?(api: CompanyApi, ids: string[], signal?: AbortSignal): Promise<T[]>;
   id(item: T): string;
   label(item: T): string;
   description?(item: T): string | undefined;
@@ -32,6 +34,12 @@ function source<T>(definition: EntitySource<T>): EntitySource<T> {
 }
 
 const asPage = <T>(list: { data?: T[] }): Page<T> => ({ data: list.data ?? [], page: { hasMore: false } });
+
+/** The list query that returns exactly these records (the list endpoints' `id` filter). */
+export const byIds = (ids: string[]): Query => ({ 'filter[id][in]': ids, limit: ids.length });
+
+const partnersById = async (c: CompanyApi, ids: string[], signal?: AbortSignal) =>
+  (await c.get('/partners', null, { query: byIds(ids), signal })).data ?? [];
 
 export const entities = {
   branch: source<Schemas['BranchResponse']>({
@@ -114,6 +122,7 @@ export const entities = {
     permission: 'partners.partner.read',
     list: (c, query, signal) => c.get('/partners', null, { query, signal }),
     get: (c, partnerId, signal) => c.get('/partners/{partnerId}', { partnerId }, { signal }),
+    batch: partnersById,
     id: (p) => p.id!,
     label: codeName,
     selectable: (p) => p.status === 'ACTIVE',
@@ -124,6 +133,7 @@ export const entities = {
     permission: 'partners.partner.read',
     list: (c, query, signal) => c.get('/customers', null, { query, signal }),
     get: (c, partnerId, signal) => c.get('/partners/{partnerId}', { partnerId }, { signal }),
+    batch: partnersById,
     id: (p) => p.id!,
     label: codeName,
     selectable: (p) => p.status === 'ACTIVE',
@@ -134,6 +144,7 @@ export const entities = {
     permission: 'partners.partner.read',
     list: (c, query, signal) => c.get('/suppliers', null, { query, signal }),
     get: (c, partnerId, signal) => c.get('/partners/{partnerId}', { partnerId }, { signal }),
+    batch: partnersById,
     id: (p) => p.id!,
     label: codeName,
     selectable: (p) => p.status === 'ACTIVE',
@@ -154,6 +165,7 @@ export const entities = {
     permission: 'inventory.product.read',
     list: (c, query, signal) => c.get('/products', null, { query, signal }),
     get: (c, productId, signal) => c.get('/products/{productId}', { productId }, { signal }),
+    batch: async (c, ids, signal) => (await c.get('/products', null, { query: byIds(ids), signal })).data ?? [],
     id: (p) => p.id!,
     label: codeName,
     selectable: (p) => p.status === 'ACTIVE',
@@ -164,6 +176,7 @@ export const entities = {
     permission: 'inventory.product.read',
     list: (c, query, signal) => c.get('/variants', null, { query, signal }),
     get: (c, variantId, signal) => c.get('/variants/{variantId}', { variantId }, { signal }),
+    batch: async (c, ids, signal) => (await c.get('/variants', null, { query: byIds(ids), signal })).data ?? [],
     id: (v) => v.id!,
     label: (v) => [v.sku, v.name].filter(Boolean).join(' — '),
     description: (v) => v.barcode ?? undefined,
@@ -231,6 +244,7 @@ export const entities = {
     permission: 'hr.employee.read',
     list: (c, query, signal) => c.get('/employees', null, { query, signal }),
     get: (c, employeeId, signal) => c.get('/employees/{employeeId}', { employeeId }, { signal }),
+    batch: async (c, ids, signal) => (await c.get('/employees', null, { query: byIds(ids), signal })).data ?? [],
     id: (e) => e.id!,
     label: (e) => `${e.employeeNumber} — ${e.preferredName || e.firstName} ${e.lastName}`,
     description: (e) => e.workEmail ?? undefined,

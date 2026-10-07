@@ -3,18 +3,27 @@
 import { expect, storage, test } from './support/fixtures';
 import { apiAs } from './support/flows';
 
+/** yyyy-MM-dd of a local date (toISOString would shift it to UTC, a day early east of Greenwich). */
+const isoDate = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
 /** A free weekday range in the future: a week per run, moving on while earlier weeks are taken. */
 async function freeWeek(seed: Parameters<typeof apiAs>[1]): Promise<{ start: string; end: string }> {
   const hr = apiAs('alice', seed);
-  const taken = (await hr.all('/leave-requests', { 'filter[employeeId]': seed.ids.employeeE003 })) as { startDate: string; status: string }[];
-  const used = new Set(taken.filter((r) => r.status !== 'CANCELLED' && r.status !== 'REJECTED').map((r) => r.startDate));
+  const taken = (await hr.all('/leave-requests', { 'filter[employeeId]': seed.ids.employeeE003 })) as {
+    startDate: string;
+    endDate: string;
+    status: string;
+  }[];
+  const booked = taken.filter((r) => r.status === 'SUBMITTED' || r.status === 'APPROVED');
+  const free = (start: string, end: string) => booked.every((r) => r.endDate < start || r.startDate > end);
   const date = new Date();
   date.setDate(date.getDate() + 14);
   for (;;) {
     while (date.getDay() !== 1) date.setDate(date.getDate() + 1); // Monday
-    const start = date.toISOString().slice(0, 10);
-    const end = new Date(date.getTime() + 86_400_000).toISOString().slice(0, 10); // Tuesday
-    if (!used.has(start)) return { start, end };
+    const start = isoDate(date);
+    const end = isoDate(new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1)); // Tuesday
+    if (free(start, end)) return { start, end };
     date.setDate(date.getDate() + 7);
   }
 }
@@ -22,6 +31,8 @@ async function freeWeek(seed: Parameters<typeof apiAs>[1]): Promise<{ start: str
 test('leave request', async ({ browser, seed, companyPath }) => {
   test.setTimeout(3 * 60_000);
   const { start, end } = await freeWeek(seed);
+  // Earlier runs left their requests behind: this run's request is the one with its own reason.
+  const reason = `Family visit ${start}`;
 
   const employee = await (await browser.newContext({ storageState: storage('erin') })).newPage();
   await employee.goto(companyPath('/me/leave'));
@@ -32,18 +43,18 @@ test('leave request', async ({ browser, seed, companyPath }) => {
   await employee.getByRole('option', { name: 'Annual leave' }).click();
   await dialog.getByLabel('Start date').fill(start);
   await dialog.getByLabel('End date').fill(end);
-  await dialog.getByLabel('Reason').fill('Family visit');
+  await dialog.getByLabel('Reason').fill(reason);
   await dialog.getByRole('button', { name: 'Save' }).click();
   await expect(dialog).toBeHidden();
 
-  const row = employee.getByRole('row').filter({ hasText: 'Family visit' }).first();
+  const row = employee.getByRole('row').filter({ hasText: reason });
   await expect(row.getByText('Draft')).toBeVisible();
   await row.getByRole('button', { name: 'Submit' }).click();
   await expect(row.getByText('Submitted')).toBeVisible();
 
   const hr = await (await browser.newContext({ storageState: storage('alice') })).newPage();
   await hr.goto(companyPath('/hr/leave-requests'));
-  const request = hr.getByRole('row').filter({ hasText: 'Family visit' }).filter({ hasText: 'Submitted' }).first();
+  const request = hr.getByRole('row').filter({ hasText: reason });
   await request.getByRole('button', { name: 'Approve' }).click();
   const confirm = hr.getByRole('dialog');
   await confirm.getByLabel(/note/i).fill('Enjoy');
@@ -51,5 +62,5 @@ test('leave request', async ({ browser, seed, companyPath }) => {
   await expect(confirm).toBeHidden();
 
   await employee.reload();
-  await expect(employee.getByRole('row').filter({ hasText: 'Family visit' }).first().getByText('Approved')).toBeVisible();
+  await expect(employee.getByRole('row').filter({ hasText: reason }).getByText('Approved')).toBeVisible();
 });

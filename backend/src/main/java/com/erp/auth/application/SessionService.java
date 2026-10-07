@@ -4,6 +4,8 @@ import com.erp.auth.domain.SecureTokens;
 import com.erp.auth.domain.UserStatus;
 import com.erp.auth.persistence.SessionRepository;
 import com.erp.auth.persistence.UserRepository;
+import com.erp.platform.audit.AuditEvent;
+import com.erp.platform.audit.AuditPort;
 import com.erp.platform.security.ActorType;
 import com.erp.platform.security.AuthenticatedActor;
 import java.time.Clock;
@@ -32,12 +34,15 @@ public class SessionService {
     private final SessionRepository sessions;
     private final UserRepository users;
     private final AuthProperties properties;
+    private final AuditPort audit;
     private final Clock clock;
 
-    public SessionService(SessionRepository sessions, UserRepository users, AuthProperties properties, Clock clock) {
+    public SessionService(
+            SessionRepository sessions, UserRepository users, AuthProperties properties, AuditPort audit, Clock clock) {
         this.sessions = sessions;
         this.users = users;
         this.properties = properties;
+        this.audit = audit;
         this.clock = clock;
     }
 
@@ -117,20 +122,18 @@ public class SessionService {
         return sessions.listForUser(userId);
     }
 
+    /** Signs one of the user's own sessions out (AUD-1: audited like a logout). */
     @Transactional
     public boolean revoke(UUID userId, UUID sessionId) {
-        return sessions.find(userId, sessionId)
+        boolean revoked = sessions.find(userId, sessionId)
                 .map(s -> sessions.delete(s.id()) == 1)
                 .orElse(false);
-    }
-
-    @Transactional
-    public int revokeAll(UUID userId) {
-        return sessions.deleteForUser(userId);
-    }
-
-    @Transactional
-    public int revokeOthers(UUID userId, UUID keepSessionId) {
-        return sessions.deleteForUserExcept(userId, keepSessionId);
+        if (revoked) {
+            audit.record(AuditEvent.builder("SESSION_REVOKE", "auth")
+                    .entity("session", sessionId, null)
+                    .detail("userId", userId)
+                    .build());
+        }
+        return revoked;
     }
 }

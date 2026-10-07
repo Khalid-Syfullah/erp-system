@@ -55,22 +55,68 @@ export function useEntityIndex<T>(source: EntitySource<T>, enabled = true) {
   return { ...query, items: query.data ?? [], index, allowed };
 }
 
-/** One record by ID: from the loaded index for 'all' sources, by GET for 'search' sources. */
+const BATCH_SIZE = 100;
+const BATCH_WINDOW_MS = 10;
+
+interface Waiter {
+  resolve: (item: unknown) => void;
+  reject: (error: unknown) => void;
+}
+
+const batchQueues = new Map<string, Map<string, Waiter[]>>();
+
+/**
+ * Fetches a record of a 'search' source by ID through its `batch` lookup: the IDs requested within a
+ * few milliseconds (the rows of a table) go out together, at most 100 per request, instead of one
+ * request per cell. Resolves to null for IDs the server does not return (unknown or out of scope).
+ */
+export function loadBatched<T>(source: EntitySource<T>, api: CompanyApi, companyId: string, id: string): Promise<T | null> {
+  const key = `${companyId}|${source.key}`;
+  return new Promise((resolve, reject) => {
+    let queue = batchQueues.get(key);
+    if (!queue) {
+      const pending = new Map<string, Waiter[]>();
+      batchQueues.set(key, pending);
+      queue = pending;
+      setTimeout(() => {
+        batchQueues.delete(key);
+        const ids = [...pending.keys()];
+        for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+          const chunk = ids.slice(i, i + BATCH_SIZE);
+          source.batch!(api, chunk).then(
+            (items) => {
+              const found = new Map(items.map((item) => [source.id(item), item]));
+              for (const each of chunk) pending.get(each)!.forEach((w) => w.resolve(found.get(each) ?? null));
+            },
+            (error: unknown) => {
+              for (const each of chunk) pending.get(each)!.forEach((w) => w.reject(error));
+            },
+          );
+        }
+      }, BATCH_WINDOW_MS);
+    }
+    const waiters = queue.get(id) ?? [];
+    waiters.push({ resolve: resolve as (item: unknown) => void, reject });
+    queue.set(id, waiters);
+  });
+}
+
+/** One record by ID: from the loaded index for 'all' sources, batched or by GET for 'search' sources. */
 export function useEntity<T>(source: EntitySource<T>, id: string | null | undefined) {
   const { api, companyId, can } = useCompany();
   const allowed = !source.permission || can(source.permission);
   const all = useEntityIndex(source, source.mode === 'all' && !!id);
   const single = useQuery({
     queryKey: sourceKey(companyId, source as EntitySource<unknown>, 'id', id),
-    queryFn: ({ signal }) => source.get!(api, id!, signal),
-    enabled: source.mode === 'search' && !!id && allowed && !!source.get,
+    queryFn: ({ signal }) => (source.batch ? loadBatched(source, api, companyId, id!) : source.get!(api, id!, signal)),
+    enabled: source.mode === 'search' && !!id && allowed && (!!source.batch || !!source.get),
     staleTime: 5 * 60_000,
     retry: false,
   });
   if (source.mode === 'all') {
     return { item: id ? all.index.get(id) : undefined, isLoading: all.isLoading, allowed };
   }
-  return { item: single.data, isLoading: single.isLoading, allowed };
+  return { item: single.data ?? undefined, isLoading: single.isLoading, allowed };
 }
 
 function shortId(id: string): string {

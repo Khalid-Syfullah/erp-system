@@ -177,6 +177,63 @@ class LeaveIntegrationTest extends IntegrationTest {
         assertThat(balance(veteran, annual, year)).isEqualByComparingTo("24");
     }
 
+    /**
+     * Submitting and approving lock the employee (DATABASE.md §9), so two requests that each fit the
+     * balance but not together cannot both get through when they arrive at the same moment.
+     */
+    @Test
+    void concurrentRequestsNeverOverdrawTheBalance() throws Exception {
+        hr.accrue(h, LocalDate.of(year, 1, 1));
+        LocalDate march = firstMonday(year, 3);
+        LocalDate may = firstMonday(year, 5);
+        // Three weeks each: 15 of the 24 days, so either fits and both do not.
+        List<UUID> requests = List.of(
+                request(veteran, annual, march, march.plusDays(18)), request(veteran, annual, may, may.plusDays(18)));
+        assertThat(days(requests.get(0))).isEqualByComparingTo("15");
+        assertThat(days(requests.get(1))).isEqualByComparingTo("15");
+
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            java.util.concurrent.CyclicBarrier start = new java.util.concurrent.CyclicBarrier(2);
+            List<java.util.concurrent.Future<Integer>> results = new java.util.ArrayList<>();
+            for (UUID request : requests) {
+                results.add(pool.submit(() -> {
+                    start.await(10, java.util.concurrent.TimeUnit.SECONDS);
+                    return hr.action(h.session(), h.path("/leave-requests/" + request + "/submit"), 0, null, null)
+                            .andReturn()
+                            .getResponse()
+                            .getStatus();
+                }));
+            }
+            List<Integer> statuses = new java.util.ArrayList<>();
+            for (java.util.concurrent.Future<Integer> result : results) {
+                statuses.add(result.get(60, java.util.concurrent.TimeUnit.SECONDS));
+            }
+            assertThat(statuses).containsExactlyInAnyOrder(200, 422);
+        } finally {
+            pool.shutdownNow();
+        }
+        UUID submitted = requests.stream()
+                .filter(r -> {
+                    try {
+                        return "SUBMITTED".equals(hr.read(h.session(), h.path("/leave-requests/" + r), "$.status"));
+                    } catch (Exception e) {
+                        throw new IllegalStateException(e);
+                    }
+                })
+                .findFirst()
+                .orElseThrow();
+        expect(
+                hr.action(
+                        h.session(),
+                        h.path("/leave-requests/" + submitted + "/approve"),
+                        version(submitted),
+                        null,
+                        null),
+                200);
+        assertThat(balance(veteran, annual, year)).isEqualByComparingTo("9");
+    }
+
     @Test
     void employeesRequestAndManagersDecide() throws Exception {
         hr.accrue(h, LocalDate.of(year, 1, 1));

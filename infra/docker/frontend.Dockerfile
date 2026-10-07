@@ -12,6 +12,11 @@ COPY frontend/ ./
 RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.29-alpine
+# The base image's Alpine packages lag behind security fixes (curl, OpenSSL, expat, pcre2): take
+# the patched ones at build time (CI scans the image, SECURITY.md §11), then drop back to nginx.
+USER root
+RUN apk upgrade --no-cache
+USER 101
 COPY infra/docker/nginx/spa.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /workspace/frontend/dist /usr/share/nginx/html
 # Runs as the unprivileged nginx user on port 8080; mount nothing writable but /tmp.

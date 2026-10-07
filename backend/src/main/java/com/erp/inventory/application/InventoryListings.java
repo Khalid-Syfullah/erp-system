@@ -27,6 +27,8 @@ public final class InventoryListings {
     public static final ListDefinition PRODUCTS = ListDefinition.builder("inventory.products")
             .sortable("code", "name", "createdAt")
             .defaultSort(SortOrder.asc("code"))
+            // Batch lookups of referenced records by ID (the web app's names in list cells).
+            .filter("id", ValueType.UUID, IN)
             .filter("code", ValueType.STRING, EQ, IN, LIKE)
             .filter("categoryId", ValueType.UUID, EQ, IN)
             .enumFilter("productType", Set.of("STOCKABLE", "CONSUMABLE", "SERVICE"), EQ, IN)
@@ -39,6 +41,8 @@ public final class InventoryListings {
     public static final ListDefinition VARIANTS = ListDefinition.builder("inventory.product_variants")
             .sortable("sku", "name", "createdAt")
             .defaultSort(SortOrder.asc("sku"))
+            // Batch lookups of referenced records by ID (the web app's names in list cells).
+            .filter("id", ValueType.UUID, IN)
             .filter("productId", ValueType.UUID, EQ, IN)
             .filter("sku", ValueType.STRING, EQ, IN, LIKE)
             .filter("barcode", ValueType.STRING, EQ)

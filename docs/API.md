@@ -124,7 +124,7 @@ Master data is never deleted once referenced. It is deactivated with `POST /…/
 | `INVALID_TOKEN` | 400 | Invitation or reset token unknown, used or expired |
 | `FORBIDDEN` | 403 | Missing permission |
 | `SOD_VIOLATION` | 403 | Segregation of duties (the approver created the document; changing one's own role assignments) |
-| `PRIVILEGE_ESCALATION` | 403 | Assigning, removing or scoping a role with permissions the caller does not hold |
+| `PRIVILEGE_ESCALATION` | 403 | Assigning, removing or scoping a role with permissions the caller does not hold, or (for a branch-restricted administrator) for branches outside the caller's scope |
 | `REAUTHENTICATION_REQUIRED` | 403 | Step-up needed: confirm the password (`POST /me/reauthenticate`) and retry within 5 minutes |
 | `MFA_ENROLLMENT_REQUIRED` | 403 | MFA is mandatory for this user; the session may only enroll TOTP |
 | `MFA_MANDATORY` / `MFA_NOT_ENROLLED` | 409 | MFA cannot be disabled for this user / there is no MFA to disable or regenerate |
@@ -218,6 +218,8 @@ Response envelope:
   - `isNull` (`true`/`false`)
 - Example: `filter[status][in]=CONFIRMED,PARTIALLY_DELIVERED&filter[orderDate][gte]=2026-01-01&filter[customerId]=0190...`
 - **Only allowlisted fields can be filtered.** Each list endpoint documents its filterable fields. Unknown fields return `400`. Filters are compiled into parameterized jOOQ conditions; string interpolation into SQL is never used.
+- `in` takes at most 100 values (`400 TOO_MANY_VALUES`).
+- **Lookups by ID:** the partner, product, variant and employee lists accept `filter[id][in]=…`, so a client resolves the names of the records a page references in one request rather than one per record. The usual scope still applies (an employee outside the caller's branches is simply not returned).
 - **Effective-dated lists** (employment assignments, department heads) also accept `asOf=yyyy-MM-dd`, which keeps only the rows in effect on that date (`effectiveFrom ≤ asOf ≤ effectiveTo`, open end included).
 
 ### 8.3 Sorting
@@ -516,7 +518,7 @@ Branch-restricted users see quotations, orders, deliveries and returns of their 
 | `POST {c}/payroll-runs/{id}/{approve|unapprove}` [A][I] | `payroll.run.approve` (SoD) |
 | `POST {c}/payroll-runs/{id}/post` [A][I] · `POST …/{id}/mark-paid` [A][I] `{bankAccountId, paymentDate}` | `payroll.run.post` / `payroll.run.pay` |
 | `GET {c}/payroll-runs/{id}/payslips` · `GET {c}/payslips/{id}` · `GET {c}/payslips/{id}/pdf` (posted runs; audited) | `payroll.payslip.read` |
-| `GET {c}/payroll-runs/{id}/bank-file` (CSV; audit-logged) | `payroll.run.pay` |
+| `GET {c}/payroll-runs/{id}/bank-file` (CSV with decrypted account numbers: step-up required, audited as `VIEW_SENSITIVE`) | `payroll.run.pay` |
 | `GET {c}/payroll-runs/{id}/summary` · `GET {c}/payroll-reports/component-totals?from=&to=` | `payroll.report.read` |
 | `GET {c}/payroll-runs/{id}/register` (pay per employee) | `payroll.report.read` + `payroll.payslip.read` |
 | Self-service: `GET {c}/me/payslips` · `GET {c}/me/payslips/{id}` · `GET {c}/me/payslips/{id}/pdf` (own, posted runs only) | authenticated, linked employee |

@@ -29,8 +29,9 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Role assignments (SECURITY.md §4.1, §4.3). System administrators manage assignments in any
  * company. Company administrators manage them inside their company, with escalation guards: they can
- * only hand out roles whose permissions they hold themselves, cannot change their own assignments,
- * and cannot grant global-only permissions. Branch IDs must belong to the company (composite FK).
+ * only hand out roles whose permissions they hold themselves, and — when their own access is limited
+ * to some branches — only within those branches; they cannot change their own assignments, and
+ * cannot grant global-only permissions. Branch IDs must belong to the company (composite FK).
  */
 @Service
 public class AssignmentService {
@@ -107,7 +108,7 @@ public class AssignmentService {
         AuthenticatedActor actor = CurrentContext.requireActor();
         SegregationOfDuties.requireDifferentUsers(actor.userId(), request.userId(), "change your own role assignments");
         RoleInfo role = roles.find(request.roleId()).orElseThrow(() -> unknownRole());
-        requireHeldByActor(actor, companyId, role);
+        requireHeldByActor(actor, companyId, role, request.branchIds());
         return assign(companyId, request);
     }
 
@@ -131,7 +132,7 @@ public class AssignmentService {
         SegregationOfDuties.requireDifferentUsers(
                 actor.userId(), assignment.userId(), "change your own role assignments");
         RoleInfo role = roles.find(assignment.roleId()).orElseThrow();
-        requireHeldByActor(actor, companyId, role);
+        requireHeldByActor(actor, companyId, role, assignment.branchIds());
         remove(assignment);
     }
 
@@ -196,22 +197,26 @@ public class AssignmentService {
                 .build());
     }
 
-    /** No escalation: the company administrator must hold every permission of the role. */
-    private void requireHeldByActor(AuthenticatedActor actor, UUID companyId, RoleInfo role) {
-        Set<String> held = new HashSet<>(permissionResolver
-                .grant(actor.userId(), companyId)
-                .map(CompanyGrant::permissions)
-                .orElse(Set.of()));
+    /**
+     * No escalation: the company administrator must hold every permission of the role, and an
+     * administrator limited to some branches may scope the assignment only to those branches (an
+     * empty set means all branches, which only an administrator with all branches may grant).
+     */
+    private void requireHeldByActor(AuthenticatedActor actor, UUID companyId, RoleInfo role, Set<UUID> branchIds) {
+        CompanyGrant grant = permissionResolver.grant(actor.userId(), companyId).orElse(null);
+        Set<String> held = new HashSet<>(grant == null ? Set.of() : grant.permissions());
         if (actor.allowedPermissions() != null) {
             held.retainAll(actor.allowedPermissions());
         }
         Set<String> missing = new TreeSet<>(role.permissions());
         missing.removeAll(held);
         boolean global = role.permissions().stream().anyMatch(AuthPermissions.GLOBAL_ONLY::contains);
-        if (!missing.isEmpty() || global) {
+        Set<UUID> ownBranches = grant == null ? Set.of() : grant.branchScope();
+        boolean wider = ownBranches != null && (branchIds.isEmpty() || !ownBranches.containsAll(branchIds));
+        if (!missing.isEmpty() || global || wider) {
             throw new ApiException(
                     AuthErrorCode.PRIVILEGE_ESCALATION,
-                    "You can only assign or remove roles whose permissions you hold yourself.");
+                    "You can only assign or remove roles whose permissions you hold yourself, within your own branches.");
         }
     }
 

@@ -6,6 +6,8 @@ import com.erp.payroll.persistence.PayslipRepository;
 import com.erp.payroll.persistence.RunRepository;
 import com.erp.platform.audit.AuditEvent;
 import com.erp.platform.audit.AuditPort;
+import com.erp.platform.context.CurrentContext;
+import com.erp.platform.security.ReauthenticationGuard;
 import com.erp.platform.web.ApiException;
 import com.erp.platform.web.FieldViolation;
 import com.erp.platform.web.PlatformErrorCode;
@@ -22,7 +24,9 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * The generic payroll bank file (PRODUCT_SPEC.md §11.1): one CSV row per payslip with the employee's
  * primary bank account and net pay, for approved, posted and paid runs. The decrypted account numbers
- * leave the system here, so every export is audited; cells are CSV-injection safe.
+ * leave the system here — every employee's at once — so, like revealing one account (SECURITY.md §7),
+ * it needs a recent password confirmation (step-up; API tokens cannot) and is audited as
+ * {@code VIEW_SENSITIVE}; cells are CSV-injection safe.
  */
 @Service
 public class BankFileService {
@@ -49,6 +53,8 @@ public class BankFileService {
 
     @Transactional
     public BankFile export(UUID runId) {
+        ReauthenticationGuard.require(
+                CurrentContext.requireActor(), context.clock().instant());
         UUID companyId = context.companyId();
         PayrollViews.Run run = runs.find(companyId, runId).orElseThrow(ApiException::notFound);
         if (!EXPORTABLE.contains(run.status())) {
@@ -95,9 +101,10 @@ public class BankFileService {
                     .append("\r\n");
             rows++;
         }
-        audit.record(AuditEvent.builder("EXPORT", "payroll")
+        audit.record(AuditEvent.builder("VIEW_SENSITIVE", "payroll")
                 .entity("payroll_run", runId, run.number())
                 .detail("file", "bank-file")
+                .detail("fields", "accountNumber,iban")
                 .detail("rows", rows)
                 .detail("netTotal", run.netTotal().toPlainString())
                 .build());

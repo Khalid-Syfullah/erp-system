@@ -243,7 +243,11 @@ public class DeliveryRepository {
                 .execute();
     }
 
-    /** Draft deliveries of the order (cancelling or closing the order cancels them). */
+    /**
+     * Draft deliveries of the order (cancelling or closing the order cancels them), locked {@code NOWAIT}: a draft being posted
+     * holds its row and waits for the order the caller has locked, so waiting here would deadlock
+     * (DATABASE.md §9). The caller fails at once with {@code 409 RESOURCE_BUSY}; the posting goes ahead.
+     */
     public List<SalesViews.Delivery> draftsOfOrder(UUID companyId, UUID orderId) {
         return dsl.selectFrom(DELIVERIES)
                 .where(DELIVERIES.COMPANY_ID.eq(companyId))
@@ -251,6 +255,7 @@ public class DeliveryRepository {
                 .and(DELIVERIES.STATUS.eq("DRAFT"))
                 .orderBy(DELIVERIES.ID)
                 .forUpdate()
+                .noWait()
                 .fetch(this::toView);
     }
 

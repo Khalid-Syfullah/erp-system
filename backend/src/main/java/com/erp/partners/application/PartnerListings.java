@@ -15,6 +15,8 @@ public final class PartnerListings {
     public static final ListDefinition PARTNERS = ListDefinition.builder("partners.partners")
             .sortable("code", "name", "createdAt")
             .defaultSort(SortOrder.asc("code"))
+            // Batch lookups of referenced records by ID (the web app's names in list cells).
+            .filter("id", ValueType.UUID, IN)
             .filter("code", ValueType.STRING, EQ, IN, LIKE)
             .enumFilter("status", Set.of("ACTIVE", "INACTIVE", "BLOCKED"), EQ, IN)
             .enumFilter("partnerType", Set.of("ORGANIZATION", "INDIVIDUAL"), EQ)

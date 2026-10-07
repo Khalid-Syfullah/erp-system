@@ -293,7 +293,11 @@ public class InvoiceRepository {
                 .execute();
     }
 
-    /** Draft invoices of the order (cancelling the order cancels them). */
+    /**
+     * Draft invoices of the order (cancelling the order cancels them), locked {@code NOWAIT}: a draft being posted
+     * holds its row and waits for the order the caller has locked, so waiting here would deadlock
+     * (DATABASE.md §9). The caller fails at once with {@code 409 RESOURCE_BUSY}; the posting goes ahead.
+     */
     public List<SalesViews.Invoice> draftsOfOrder(UUID companyId, UUID orderId) {
         return dsl.selectFrom(INVOICES)
                 .where(INVOICES.COMPANY_ID.eq(companyId))
@@ -301,6 +305,7 @@ public class InvoiceRepository {
                 .and(INVOICES.STATUS.eq("DRAFT"))
                 .orderBy(INVOICES.ID)
                 .forUpdate()
+                .noWait()
                 .fetch(this::toView);
     }
 

@@ -8,7 +8,6 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -287,12 +286,5 @@ public final class PayrollCalculator {
 
     private static BigDecimal ratio(int days, int periodDays) {
         return BigDecimal.valueOf(days).divide(BigDecimal.valueOf(periodDays), SCALE, RoundingMode.HALF_UP);
-    }
-
-    /** Lines grouped by component, for reports. */
-    public static Map<UUID, BigDecimal> totalsByComponent(List<Line> lines) {
-        Map<UUID, BigDecimal> totals = new LinkedHashMap<>();
-        lines.forEach(l -> totals.merge(l.component().id(), l.amount(), BigDecimal::add));
-        return totals;
     }
 }

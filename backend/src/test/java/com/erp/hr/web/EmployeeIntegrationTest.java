@@ -225,6 +225,11 @@ class EmployeeIntegrationTest extends IntegrationTest {
         mvc.perform(get(admin.path("/employees/" + unplaced)).cookie(session)).andExpect(status().isNotFound());
         mvc.perform(get(admin.path("/employees/" + northEmployee)).cookie(session))
                 .andExpect(status().isOk());
+        // Lookups by ID (the web app's batched names) keep the branch scope.
+        mvc.perform(get(admin.path("/employees"))
+                        .cookie(session)
+                        .param("filter[id][in]", northEmployee + "," + southEmployee + "," + unplaced))
+                .andExpect(jsonPath("$.data[*].id").value(contains(northEmployee.toString())));
         mvc.perform(unsafe(patch(admin.path("/employees/" + southEmployee)))
                         .cookie(session)
                         .header("If-Match", etag(0))
@@ -310,6 +315,8 @@ class EmployeeIntegrationTest extends IntegrationTest {
                         .cookie(admin.session())
                         .param("filter[hireDate][lte]", today.minusYears(2).toString()))
                 .andExpect(jsonPath("$.data[*].employeeNumber").value(contains("L1", "L2")));
+        mvc.perform(get(admin.path("/employees")).cookie(admin.session()).param("filter[id][in]", second.toString()))
+                .andExpect(jsonPath("$.data[*].employeeNumber").value(contains("L2")));
     }
 
     @Test

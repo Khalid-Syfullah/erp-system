@@ -28,10 +28,6 @@ export function configureFormatting(next: Partial<FormatSettings>): void {
   }
 }
 
-export function formatSettings(): FormatSettings {
-  return settings;
-}
-
 function isSupportedLocale(locale: string): boolean {
   try {
     return Intl.NumberFormat.supportedLocalesOf([locale.replace('_', '-')]).length > 0;
@@ -279,6 +275,3 @@ export function startOfMonthIso(value: string = todayIso()): string {
   return `${value.slice(0, 7)}-01`;
 }
 
-export function startOfYearIso(value: string = todayIso()): string {
-  return `${value.slice(0, 4)}-01-01`;
-}

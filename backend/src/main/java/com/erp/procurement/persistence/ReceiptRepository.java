@@ -282,7 +282,11 @@ public class ReceiptRepository {
                 .execute();
     }
 
-    /** Draft receipts of the order (cancelling the order cancels them). */
+    /**
+     * Draft receipts of the order (cancelling the order cancels them), locked {@code NOWAIT}: a draft being posted
+     * holds its row and waits for the order the caller has locked, so waiting here would deadlock
+     * (DATABASE.md §9). The caller fails at once with {@code 409 RESOURCE_BUSY}; the posting goes ahead.
+     */
     public List<ProcurementViews.GoodsReceipt> draftsOfOrder(UUID companyId, UUID orderId) {
         return dsl.selectFrom(GOODS_RECEIPTS)
                 .where(GOODS_RECEIPTS.COMPANY_ID.eq(companyId))
@@ -290,6 +294,7 @@ public class ReceiptRepository {
                 .and(GOODS_RECEIPTS.STATUS.eq("DRAFT"))
                 .orderBy(GOODS_RECEIPTS.ID)
                 .forUpdate()
+                .noWait()
                 .fetch(ReceiptRepository::toView);
     }
 

@@ -30,14 +30,6 @@ public class SessionCookies {
         this.challengeCookie = prefix + "erp_mfa";
     }
 
-    public String sessionCookieName() {
-        return sessionCookie;
-    }
-
-    public String challengeCookieName() {
-        return challengeCookie;
-    }
-
     public void setSession(HttpServletResponse response, String token) {
         add(response, sessionCookie, token, "Lax", null);
     }

@@ -35,6 +35,7 @@ import tools.jackson.databind.json.JsonMapper;
 public class EmployeeRepository {
 
     private static final ListBinding BINDING = ListBinding.builder(HrListings.EMPLOYEES)
+            .field("id", EMPLOYEES.ID)
             .field("employeeNumber", EMPLOYEES.EMPLOYEE_NUMBER)
             .field("lastName", EMPLOYEES.LAST_NAME)
             .field("hireDate", EMPLOYEES.HIRE_DATE)
@@ -192,54 +193,6 @@ public class EmployeeRepository {
                         .set(
                                 EMPLOYEES.ADDRESS,
                                 address == null ? null : JSONB.valueOf(JSON.writeValueAsString(address)))
-                        .set(EMPLOYEES.DATE_OF_BIRTH_ENCRYPTED, dateOfBirth)
-                        .set(EMPLOYEES.NATIONAL_ID_ENCRYPTED, nationalId)
-                        .set(EMPLOYEES.NATIONAL_ID_LAST4, nationalIdLast4)
-                        .set(EMPLOYEES.KEY_VERSION, keyVersion == null ? null : keyVersion.shortValue())
-                        .set(EMPLOYEES.UPDATED_AT, OffsetDateTime.now())
-                        .set(EMPLOYEES.UPDATED_BY, actor)
-                        .set(EMPLOYEES.VERSION, expectedVersion + 1)
-                        .where(EMPLOYEES.COMPANY_ID.eq(companyId))
-                        .and(EMPLOYEES.ID.eq(id))
-                        .and(EMPLOYEES.VERSION.eq(expectedVersion))
-                        .execute()
-                == 1;
-    }
-
-    public boolean updatePersonal(
-            UUID companyId,
-            UUID id,
-            int expectedVersion,
-            UUID actor,
-            @Nullable String personalEmail,
-            @Nullable String phone,
-            @Nullable Address address) {
-        return dsl.update(EMPLOYEES)
-                        .set(EMPLOYEES.PERSONAL_EMAIL, personalEmail)
-                        .set(EMPLOYEES.PHONE, phone)
-                        .set(
-                                EMPLOYEES.ADDRESS,
-                                address == null ? null : JSONB.valueOf(JSON.writeValueAsString(address)))
-                        .set(EMPLOYEES.UPDATED_AT, OffsetDateTime.now())
-                        .set(EMPLOYEES.UPDATED_BY, actor)
-                        .set(EMPLOYEES.VERSION, expectedVersion + 1)
-                        .where(EMPLOYEES.COMPANY_ID.eq(companyId))
-                        .and(EMPLOYEES.ID.eq(id))
-                        .and(EMPLOYEES.VERSION.eq(expectedVersion))
-                        .execute()
-                == 1;
-    }
-
-    public boolean updateSensitive(
-            UUID companyId,
-            UUID id,
-            int expectedVersion,
-            UUID actor,
-            byte @Nullable [] dateOfBirth,
-            byte @Nullable [] nationalId,
-            @Nullable String nationalIdLast4,
-            @Nullable Integer keyVersion) {
-        return dsl.update(EMPLOYEES)
                         .set(EMPLOYEES.DATE_OF_BIRTH_ENCRYPTED, dateOfBirth)
                         .set(EMPLOYEES.NATIONAL_ID_ENCRYPTED, nationalId)
                         .set(EMPLOYEES.NATIONAL_ID_LAST4, nationalIdLast4)

@@ -27,8 +27,10 @@ postgres-image = "postgres:18.6"
 # Security overrides of versions managed by the Spring Boot BOM. Remove once the BOM ships these or newer.
 #   tomcat 11.0.24: CVE-2026-65182, CVE-2026-65905, CVE-2026-68525 (CRITICAL)
 #   jackson 3.1.5:  CVE-2026-89407, CVE-2026-89425, CVE-2026-68497, CVE-2026-91776, CVE-2026-91777 (HIGH)
+#   jackson 2.22.1 (Jackson 2, used by springdoc/swagger-core): the same five CVEs (HIGH)
 tomcat = "11.0.26"
 jackson = "3.1.7"
+jackson2 = "2.22.3"
 
 [libraries]
 spring-boot-bom = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "spring-boot" }
@@ -50,6 +52,7 @@ micrometer-registry-prometheus = { module = "io.micrometer:micrometer-registry-p
 spring-modulith-api = { module = "org.springframework.modulith:spring-modulith-api" }
 springdoc-webmvc-api = { module = "org.springdoc:springdoc-openapi-starter-webmvc-api", version.ref = "springdoc" }
 jackson-bom = { module = "tools.jackson:jackson-bom", version.ref = "jackson" }
+jackson2-bom = { module = "com.fasterxml.jackson:jackson-bom", version.ref = "jackson2" }
 awssdk-bom = { module = "software.amazon.awssdk:bom", version.ref = "awssdk" }
 awssdk-s3 = { module = "software.amazon.awssdk:s3" }
 awssdk-url-connection-client = { module = "software.amazon.awssdk:url-connection-client" }

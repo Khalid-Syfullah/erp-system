@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { api, companyApi, setAuthHandlers } from './client';
+import { api, companyApi, download, setAuthHandlers } from './client';
 import { ApiError, pointerToPath } from './errors';
 
 function json(status: number, body: unknown, headers: Record<string, string> = {}) {
@@ -70,6 +70,22 @@ describe('API client', () => {
     await api.get('/api/v1/me', {}, { anonymous: true }).catch(() => undefined);
     expect(onUnauthenticated).toHaveBeenCalledOnce();
     restore();
+  });
+
+  it.each([
+    ['an RFC 5987 name', "attachment; filename*=UTF-8''Payslip%20M%C3%A4rz.pdf", 'Payslip März.pdf'],
+    ['a plain name with a percent sign', 'attachment; filename="100% report.csv"', '100% report.csv'],
+    ['a malformed encoded name', "attachment; filename*=UTF-8''bad%E0%A4%A.csv", 'fallback.csv'],
+  ])('downloads files under %s', async (_, disposition, expected) => {
+    fetchMock.mockResolvedValueOnce(new Response('a,b', { status: 200, headers: { 'Content-Disposition': disposition } }));
+    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: () => 'blob:x', revokeObjectURL: () => undefined }));
+    const names: string[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      names.push(this.download);
+    });
+    await download('/api/v1/file', 'fallback.csv');
+    expect(names).toEqual([expected]);
+    click.mockRestore();
   });
 
   it('reports network failures as a NETWORK_ERROR problem', async () => {

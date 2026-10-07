@@ -96,16 +96,6 @@ public class LeaveLedgerRepository {
         return sum == null ? BigDecimal.ZERO : sum;
     }
 
-    /** Whether the employee has any entry of the type in the year. */
-    public boolean hasEntries(UUID companyId, UUID employeeId, UUID leaveTypeId, int year) {
-        return dsl.fetchExists(dsl.selectOne()
-                .from(LEAVE_LEDGER)
-                .where(LEAVE_LEDGER.COMPANY_ID.eq(companyId))
-                .and(LEAVE_LEDGER.EMPLOYEE_ID.eq(employeeId))
-                .and(LEAVE_LEDGER.LEAVE_TYPE_ID.eq(leaveTypeId))
-                .and(LEAVE_LEDGER.LEAVE_YEAR.eq((short) year)));
-    }
-
     public PageResponse<HrViews.LedgerEntry> list(UUID companyId, @Nullable UUID employeeId, ListQuery query) {
         Condition condition = LEAVE_LEDGER.COMPANY_ID.eq(companyId);
         if (employeeId != null) {

@@ -769,6 +769,8 @@ A phase is done only when **all** of the following hold:
 - **Compliance:** confirm retention policies, the jurisdictional tax and payroll requirements, and the data-protection review (DECISIONS.md open questions resolved or risk-accepted).
 - **Documentation:** a final pass on the docs, an operator guide and a user guides outline.
 
+**Status (code audit):** the repository-wide code audit is done (ADR-042): High findings fixed (CI without the frontend and dependency gates, fixable High CVEs in Jackson 2 and the web image, the payroll bank file revealing account numbers without step-up, branch scope missing from the role-assignment escalation guard, one request per table cell for referenced names), with tests and documentation; the reporting volume test meets the Phase 10 budget at 1/5 volume. The other deliverables above (load tests at full volume, drills, deployment manifests, alerts, runbooks, migration toolkit, SAST, SBOM, DAST, penetration test, compliance review) are open.
+
 **Exit criteria:**
 
 - Go/no-go checklist signed off.

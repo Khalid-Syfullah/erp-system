@@ -30,6 +30,7 @@ import org.springframework.stereotype.Repository;
 public class ProductRepository {
 
     private static final ListBinding BINDING = ListBinding.builder(InventoryListings.PRODUCTS)
+            .field("id", PRODUCTS.ID)
             .field("code", PRODUCTS.CODE)
             .field("name", PRODUCTS.NAME)
             .field("createdAt", PRODUCTS.CREATED_AT)

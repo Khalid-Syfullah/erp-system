@@ -94,8 +94,4 @@ public class MfaRepository {
                         .execute()
                 == 1;
     }
-
-    public int unusedRecoveryCodes(UUID userId) {
-        return dsl.fetchCount(RECOVERY_CODES, RECOVERY_CODES.USER_ID.eq(userId).and(RECOVERY_CODES.USED_AT.isNull()));
-    }
 }

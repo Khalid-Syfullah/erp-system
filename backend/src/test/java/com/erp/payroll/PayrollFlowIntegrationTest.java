@@ -1,5 +1,7 @@
 package com.erp.payroll;
 
+import static com.erp.db.admin.Tables.AUDIT_LOG;
+import static com.erp.db.auth.Tables.SESSIONS;
 import static com.erp.support.AccountingFixtures.amounts;
 import static com.erp.support.HrFixtures.expect;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -8,6 +10,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.erp.accounting.application.LedgerInvariantCheck;
+import com.erp.platform.context.CurrentContext;
+import com.erp.platform.context.RequestContext;
 import com.erp.support.AccountingFixtures;
 import com.erp.support.HrFixtures;
 import com.erp.support.IntegrationTest;
@@ -16,15 +20,18 @@ import com.erp.support.PayrollFixtures;
 import com.erp.support.PayrollFixtures.Payroll;
 import com.jayway.jsonpath.JsonPath;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * The payroll flow through the API (PRODUCT_SPEC.md §11): compensation → run → calculation job →
@@ -47,6 +54,12 @@ class PayrollFlowIntegrationTest extends IntegrationTest {
 
     @Autowired
     LedgerInvariantCheck invariants;
+
+    @Autowired
+    DSLContext dsl;
+
+    @Autowired
+    TransactionTemplate tx;
 
     private Payroll p;
     private LocalDate hired;
@@ -162,6 +175,17 @@ class PayrollFlowIntegrationTest extends IntegrationTest {
         assertThat(csv).contains("\"E001\"").contains("3025.0000").contains("4045.0000");
         // Spreadsheet formulas are neutralised.
         assertThat(csv).contains("\"'=HYPERLINK(1)\"").doesNotContain(",\"=HYPERLINK");
+        // Every employee's decrypted account number: audited as a sensitive view, and only within five
+        // minutes of a password confirmation (step-up), like revealing a single account.
+        assertThat(auditActions(p, run)).contains("VIEW_SENSITIVE");
+        dsl.update(SESSIONS)
+                .set(SESSIONS.AUTHENTICATED_AT, OffsetDateTime.now().minusMinutes(10))
+                .set(SESSIONS.REAUTHENTICATED_AT, (OffsetDateTime) null)
+                .where(SESSIONS.USER_ID.eq(p.approverUser().id()))
+                .execute();
+        mvc.perform(get(p.path("/payroll-runs/" + run + "/bank-file")).cookie(p.approver()))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("REAUTHENTICATION_REQUIRED"));
 
         // Paid: Dr salaries payable / Cr bank, recorded as a payment of kind OTHER.
         expect(
@@ -332,5 +356,14 @@ class PayrollFlowIntegrationTest extends IntegrationTest {
         assertThat((String) JsonPath.read(after, "$.run.status")).isEqualTo("APPROVED");
         assertThat(JsonPath.<String>read(after, "$.run.number")).isNull();
         assertThat(acc.lines(books, "payroll", "PAYROLL_RUN", run)).isEmpty();
+    }
+
+    private List<String> auditActions(Payroll p, UUID entityId) {
+        return CurrentContext.callWith(
+                RequestContext.forRequest("audit-check").withCompany(p.hr().company()),
+                () -> tx.execute(status -> dsl.select(AUDIT_LOG.ACTION)
+                        .from(AUDIT_LOG)
+                        .where(AUDIT_LOG.ENTITY_ID.eq(entityId))
+                        .fetch(AUDIT_LOG.ACTION)));
     }
 }

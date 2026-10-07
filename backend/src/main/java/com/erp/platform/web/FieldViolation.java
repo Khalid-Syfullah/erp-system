@@ -23,8 +23,4 @@ public record FieldViolation(
     public static FieldViolation atParameter(String parameter, String code, String message) {
         return new FieldViolation(null, parameter, code, message, null);
     }
-
-    public FieldViolation withMeta(Map<String, Object> details) {
-        return new FieldViolation(pointer, parameter, code, message, Map.copyOf(details));
-    }
 }

@@ -71,7 +71,7 @@ Related: [ARCHITECTURE.md](ARCHITECTURE.md) · [API.md](API.md) · [DATABASE.md]
 - **Step-up re-authentication** (password re-entry within the last 5 minutes) is required for:
   - disabling MFA
   - creating API tokens
-  - revealing sensitive fields (Phases 4 and 9)
+  - revealing sensitive fields (Phases 4 and 9), including in bulk: the payroll bank file carries every employee's decrypted account number and is audited as `VIEW_SENSITIVE` (Phase 12 audit)
   - changing one's own email (email changes, with verification of the new address through an `EMAIL_VERIFY` token, are not implemented yet)
 
   Step-up is `POST /api/v1/me/reauthenticate {password}`. It rotates the session secret. Failed confirmations count against a per-user budget (5 per 15 minutes).
@@ -425,6 +425,8 @@ The SPA and API are served from the **same origin**, so CORS is **disabled**: no
 | Penetration test | External, before production go-live (Phase 12) | Findings fixed or risk-accepted |
 | Code review | Branch protection, 1 approval. Changes under `auth/`, `platform/security`, `platform/crypto`, `accounting/application/posting`, `db/migration` need CODEOWNERS approval from 2 reviewers | — |
 | Security tests | Authz matrix, IDOR suite, RLS suite, CSRF, session, rate-limit and header tests (§13) | Fail |
+
+*Status (Phase 12 audit):* CI (`.github/workflows/ci.yml`) runs the dependency scan (Trivy fs over the Gradle lockfiles and `package-lock.json`, High and Critical with a fix) and `npm audit --omit=dev --audit-level=high`, builds and Trivy-scans both images (backend and web; Critical), runs the secret scan, and builds, lints and tests the frontend and checks its generated API types against the backend's OpenAPI document. Until the audit the frontend and the dependency scan were missing from CI, and runtime Jackson 2 (springdoc) and the web image's Alpine packages carried fixable High CVEs; the web image now takes patched Alpine packages at build time. Not yet automated: SAST (CodeQL/Semgrep, pending the repository hosting decision), Renovate, SBOM, DAST and the end-to-end suite (it needs the full stack).
 
 ---
 

@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.BiFunction;
+import org.jooq.CommonTableExpression;
 import org.jooq.Condition;
 import org.jooq.Field;
 import org.jooq.Record;
@@ -285,25 +286,32 @@ class InventoryViewQueries implements ViewQueries {
         LocalDate threshold = asOf.minusDays(p.integer("days"));
         var m = V_RPT_STOCK_MOVEMENTS;
         // Only ledger columns: the view's joins are dropped and the ledger index answers the query.
-        Table<?> last = DSL.select(
-                        m.WAREHOUSE_ID.as("warehouse"),
-                        m.VARIANT_ID.as("variant"),
-                        DSL.max(m.TRANSACTION_DATE)
-                                .filterWhere(m.QUANTITY_BASE.gt(BigDecimal.ZERO).and(m.MOVEMENT_TYPE.in(RECEIPTS)))
-                                .as("last_receipt"),
-                        DSL.max(m.TRANSACTION_DATE)
-                                .filterWhere(m.QUANTITY_BASE.lt(BigDecimal.ZERO).and(m.MOVEMENT_TYPE.in(ISSUES)))
-                                .as("last_issue"))
-                .from(m)
-                .where(m.COMPANY_ID.eq(s.companyId()))
-                .and(m.TRANSACTION_DATE.le(asOf))
-                .and(eq(m.WAREHOUSE_ID, p.id("warehouseId")))
-                .groupBy(m.WAREHOUSE_ID, m.VARIANT_ID)
-                .asTable("l");
+        // MATERIALIZED: the aggregate over the ledger runs exactly once. Under the page's ORDER BY …
+        // LIMIT the planner may otherwise pick a plan that re-runs it per stocked item, which turned a
+        // 0.2 s report into a 15 s timeout on some statistics samples (Phase 12 audit, ADR-042).
+        CommonTableExpression<?> last = DSL.name("l")
+                .fields("warehouse", "variant", "last_receipt", "last_issue")
+                .asMaterialized(DSL.select(
+                                m.WAREHOUSE_ID,
+                                m.VARIANT_ID,
+                                DSL.max(m.TRANSACTION_DATE)
+                                        .filterWhere(m.QUANTITY_BASE
+                                                .gt(BigDecimal.ZERO)
+                                                .and(m.MOVEMENT_TYPE.in(RECEIPTS))),
+                                DSL.max(m.TRANSACTION_DATE)
+                                        .filterWhere(m.QUANTITY_BASE
+                                                .lt(BigDecimal.ZERO)
+                                                .and(m.MOVEMENT_TYPE.in(ISSUES))))
+                        .from(m)
+                        .where(m.COMPANY_ID.eq(s.companyId()))
+                        .and(m.TRANSACTION_DATE.le(asOf))
+                        .and(eq(m.WAREHOUSE_ID, p.id("warehouseId")))
+                        .groupBy(m.WAREHOUSE_ID, m.VARIANT_ID));
         var ws = V_RPT_WAREHOUSE_STOCK;
         var w = V_RPT_WAREHOUSES;
         Field<LocalDate> lastIssue = last.field("last_issue", LocalDate.class);
-        return DSL.select(
+        return DSL.with(last)
+                .select(
                         w.WAREHOUSE_CODE.as("warehouseCode"),
                         ws.SKU.as("sku"),
                         ws.PRODUCT_NAME.as("productName"),

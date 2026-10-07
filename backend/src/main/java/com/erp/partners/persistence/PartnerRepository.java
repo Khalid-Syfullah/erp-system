@@ -31,6 +31,7 @@ import org.springframework.stereotype.Repository;
 public class PartnerRepository {
 
     private static final ListBinding BINDING = ListBinding.builder(PartnerListings.PARTNERS)
+            .field("id", PARTNERS_.ID)
             .field("code", PARTNERS_.CODE)
             .field("name", PARTNERS_.NAME)
             .field("createdAt", PARTNERS_.CREATED_AT)

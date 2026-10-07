@@ -506,7 +506,7 @@ SECURITY.md §5 lists cross-company paths (user administration, global audit, co
   - The last active system administrator cannot be disabled or demoted (`409 LAST_SYSTEM_ADMIN`), and nobody can disable or demote themselves.
 - `@GlobalAccess` marks the handlers that read company-scoped data across companies (user, role and assignment administration, the global audit log, company creation). It sets `app.global_access` for the transaction after the permission check. It is allowed only together with `@RequiresPermission` (ArchitectureTests, EndpointSecurityMatrixTest). RLS policies that honour it exist only where cross-company reads are part of the design (`admin.audit_log`).
 - **Company administrators** manage role assignments in their company (`{c}/role-assignments`), with these limits:
-  - they may assign or remove only roles whose permissions they hold themselves (`403 PRIVILEGE_ESCALATION`)
+  - they may assign or remove only roles whose permissions they hold themselves (`403 PRIVILEGE_ESCALATION`), and an administrator whose own access is limited to some branches only within those branches: an assignment for all branches, or for a branch outside their scope, is an escalation too (added by the Phase 12 audit)
   - they may not change their own assignments (`403 SOD_VIOLATION`)
   - custom roles may not contain global-only permissions
 - **No self-registration.** Users are created by invitation (`POST /admin/users`, email link) or as service accounts. The first system administrator is created by a one-shot command: profile `bootstrap-admin` with `ERP_BOOTSTRAP_ADMIN_EMAIL` and `ERP_BOOTSTRAP_ADMIN_PASSWORD`. It runs without a web server, is idempotent (it does nothing if an active system administrator exists), applies the password policy, and audits the creation.
@@ -924,6 +924,30 @@ The Phase 11 brief asked for the ERP frontend on the existing APIs: navigation f
 - The UI never decides a business outcome: a stale permission set or state only shows an action whose call then fails with the server's problem, shown to the user.
 - The end-to-end suite needs the local stack (PostgreSQL, Mailpit, object storage, the backend with `ERP_SECURITY_ALLOWED_ORIGINS` including the SPA's origin) and a bootstrapped system administrator; it then seeds and runs unattended.
 - Not in v1: document attachments and internal notes (G-8; no endpoints), list CSV export per list (G-18; reports export instead), server-sent job updates (API.md §14 polling is used), a second locale.
+
+---
+
+### ADR-042 — Phase 12 production-readiness audit: remediations that refine the specification (Accepted, Phase 12)
+
+**Context**
+
+A production-readiness audit of the whole repository (architecture, data, security, the four end-to-end workflows, frontend, CI and containers) found defects that the earlier phases' tests did not catch. Most fixes implement the specification as written (an unaudited session sign-out, the missing frontend and dependency gates in CI, fixable CVEs, dead code, a flaky end-to-end test). The ones below refine it.
+
+**Decision**
+
+- **The payroll bank file needs step-up.** It carries every employee's decrypted account number and IBAN, so it is a bulk reveal of Restricted data (SECURITY.md §7): it now requires a password confirmation within five minutes (API tokens, which cannot step up, are refused) and is audited as `VIEW_SENSITIVE` instead of `EXPORT`.
+- **Branch scope is part of the escalation guard.** A company administrator whose own assignments are limited to some branches may assign or remove a role only for a subset of those branches; an assignment for all branches (no branch list) or for another branch is `403 PRIVILEGE_ESCALATION`. Before, only the role's permissions were compared, so a branch-restricted administrator could hand out company-wide access.
+- **Order cancellation locks drafts `NOWAIT`.** Cancelling or closing a sales or purchase order locks the order, then its draft deliveries, invoices or receipts; posting one of those locks the draft, then the order. The reverse order deadlocked, and PostgreSQL might abort the posting. The drafts are now locked `FOR UPDATE NOWAIT`: a cancellation that meets a posting in flight fails at once with `409 RESOURCE_BUSY` and the posting completes (DATABASE.md §9).
+- **Lookups by ID on list endpoints.** The partner, product, variant and employee lists accept `filter[id][in]` (at most 100 IDs; the usual company and branch scope applies). The web application gathers the IDs a page shows and resolves their names with one list request per 100 IDs instead of one `GET` per table cell; a page of 50 documents no longer costs up to 50 extra requests, and a valuation page of thousands of items no longer exhausts the per-user rate limit (600 requests per minute).
+- **A plan-stable slow-moving report.** Its per-item last receipt and issue dates come from a `MATERIALIZED` CTE over the stock ledger, so the aggregate runs once whatever plan the page's `ORDER BY … LIMIT` leads to. With some `ANALYZE` samples the report had hit its 15 s timeout in the volume test (twice in full builds) while taking 0.2 s otherwise.
+- **Build and supply chain.** The shadcn/ui Tailwind stylesheet (16 KB, MIT) is vendored as `frontend/src/styles/shadcn-tailwind.css`; the `shadcn` CLI package and its dependency tree (seven High advisories) left the build. The web image takes patched Alpine packages at build time. Jackson 2 (springdoc's) is pinned to its patched release like Jackson 3.
+
+**Consequences**
+
+- Downloading the bank file may prompt for the password; the web application's step-up dialog handles it like any reveal.
+- A branch-restricted administrator can no longer grant or revoke company-wide roles; a company-wide administrator does that.
+- A cancellation racing a posting is answered `409 RESOURCE_BUSY` and can be retried.
+- Not addressed by the audit (DEVELOPMENT_PLAN.md Phase 12 deliverables that remain open): load tests against the ARCHITECTURE.md §10 targets at full volume, the restore and failover drills, deployment manifests (`infra/deploy`), alert rules, runbooks, the data migration toolkit, SAST, SBOM, DAST and the external penetration test.
 
 ---
 

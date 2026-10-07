@@ -166,6 +166,22 @@ class CatalogIntegrationTest extends IntegrationTest {
                 .andExpect(jsonPath("$.data[*].sku").value(contains("SHIRT-BLUE", "SHIRT-RED")));
         mvc.perform(get(s.path("/variants")).cookie(s.session()).param("q", "blue"))
                 .andExpect(jsonPath("$.data[*].sku").value(contains("SHIRT-BLUE")));
+        // Lookups by ID (the web app batches the names it shows): at most 100 IDs per request.
+        String blueVariant = JsonPath.<List<String>>read(
+                        body(get(s.path("/variants")).param("q", "blue")), "$.data[*].id")
+                .getFirst();
+        mvc.perform(get(s.path("/variants"))
+                        .cookie(s.session())
+                        .param("filter[id][in]", blueVariant + "," + UUID.randomUUID()))
+                .andExpect(jsonPath("$.data[*].sku").value(contains("SHIRT-BLUE")));
+        String tooMany = String.join(
+                ",",
+                java.util.stream.Stream.generate(() -> UUID.randomUUID().toString())
+                        .limit(101)
+                        .toList());
+        mvc.perform(get(s.path("/variants")).cookie(s.session()).param("filter[id][in]", tooMany))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].code").value("TOO_MANY_VALUES"));
     }
 
     @Test
@@ -234,6 +250,10 @@ class CatalogIntegrationTest extends IntegrationTest {
                 .andExpect(jsonPath("$.data[*].code").value(contains("CONSULT")));
         mvc.perform(get(s.path("/products")).cookie(s.session()).param("q", "consult"))
                 .andExpect(jsonPath("$.data[*].code").value(contains("CONSULT")));
+        mvc.perform(get(s.path("/products"))
+                        .cookie(s.session())
+                        .param("filter[id][in]", s.product().toString()))
+                .andExpect(jsonPath("$.data[*].code").value(contains("WIDGET")));
         mvc.perform(get(s.path("/products")).cookie(s.session()).param("sort", "-code"))
                 .andExpect(jsonPath("$.data[0].code").value("WIDGET"));
         mvc.perform(get(s.path("/products")).cookie(s.session()).param("sort", "description"))

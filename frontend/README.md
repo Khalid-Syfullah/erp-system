@@ -28,7 +28,7 @@ Regenerate the types after an API change; a breaking change then fails `npm run 
 |---|---|
 | `src/api/` | Generated types (`schema.d.ts`), the typed client (`client.ts`: CSRF, `If-Match`, `Idempotency-Key`, problems, step-up, session expiry), list queries, query and mutation hooks |
 | `src/auth/` | Session (`GET /me`), company context and permissions, sign-in pages' pieces, MFA enrollment, step-up dialog |
-| `src/components/ui/` | shadcn/ui (Radix) primitives |
+| `src/components/ui/` | shadcn/ui (Radix) primitives, added with `npx shadcn@4 add <name>` (the CLI is not a dependency; its Tailwind variants are vendored in `src/styles/shadcn-tailwind.css`) |
 | `src/components/` | `data/` (data table, entity pickers and names), `form/` (fields, decimal and date inputs, server-error mapping), `overlay/` (modal, drawer, confirm and form dialogs), `feedback/`, `document/` (state actions, document layout, lines editor, audit history, attachments), `master/` (master-data and settings pages), `common/` |
 | `src/modules/` | Screens per module: dashboard, org, hr, inventory, procurement, sales, accounting, payroll, reports, admin, account |
 | `src/routes/` | File routes (TanStack Router); `/c/$companyId/...` for company pages, `/admin/...` for system administration |
@@ -44,6 +44,8 @@ Regenerate the types after an API change; a breaking change then fails `npm run 
 - Every visible string comes from `src/i18n/en.ts`; unknown enum values display humanized.
 - Money and quantities stay decimal strings (`formatMoney`, `formatDecimal`, `DecimalInput`); `parseFloat` is banned by lint.
 - `dangerouslySetInnerHTML` is banned by lint; the CSP allows scripts from the origin only.
+- Referenced records are shown with `EntityName`: 'all' sources load once per company, 'search' sources are
+  resolved in batches (`filter[id][in]`, one request per 100 IDs), never one request per cell.
 - New screens: lists use `DataTable` (server filters and sorts must be on the endpoint's allowlist),
   master data `MasterDataPage`, documents `DocumentLayout` + `DocumentActions` (+ `LinesEditor` for drafts),
   action inputs `FormDialog`. Forms use react-hook-form with the `zf` schema helpers and `useSubmit`.

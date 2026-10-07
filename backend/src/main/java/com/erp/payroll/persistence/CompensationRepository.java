@@ -14,7 +14,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.jooq.DSLContext;
-import org.jooq.impl.DSL;
 import org.jspecify.annotations.Nullable;
 import org.springframework.stereotype.Repository;
 
@@ -126,14 +125,6 @@ public class CompensationRepository {
                 .where(EMPLOYEE_COMPENSATIONS.COMPANY_ID.eq(companyId))
                 .and(EMPLOYEE_COMPENSATIONS.ID.eq(id))
                 .execute();
-    }
-
-    /** Whether the structure is used by a compensation (structure changes are then restricted). */
-    public boolean usesStructure(UUID companyId, UUID structureId) {
-        return dsl.fetchExists(DSL.selectOne()
-                .from(EMPLOYEE_COMPENSATIONS)
-                .where(EMPLOYEE_COMPENSATIONS.COMPANY_ID.eq(companyId))
-                .and(EMPLOYEE_COMPENSATIONS.SALARY_STRUCTURE_ID.eq(structureId)));
     }
 
     private Map<UUID, List<PayrollViews.Override>> overrides(UUID companyId, Collection<UUID> compensationIds) {

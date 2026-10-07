@@ -15,8 +15,12 @@ import com.erp.support.IntegrationTest;
 import com.erp.support.OrgFixtures;
 import com.erp.support.SalesFixtures;
 import com.erp.support.SalesFixtures.O2C;
+import com.erp.support.TestDatabase;
 import com.jayway.jsonpath.JsonPath;
 import java.math.BigDecimal;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -94,6 +98,43 @@ class SalesConcurrencyIntegrationTest extends IntegrationTest {
         assertThat(sales.<String>read(o, "/sales-orders/" + order, "$.lines[0].deliveredQuantityBase"))
                 .isEqualTo("6.000000");
         assertThat(sales.<String>read(o, "/sales-orders/" + order, "$.status")).isEqualTo("PARTIALLY_DELIVERED");
+    }
+
+    /**
+     * Cancelling an order locks the order, then its drafts; posting a delivery locks the delivery, then
+     * the order. A cancellation that meets a posting in flight fails at once (NOWAIT) instead of
+     * deadlocking with it, and leaves the posting to finish.
+     */
+    @Test
+    void cancellingAnOrderWhoseDeliveryIsBeingPostedFailsFast() throws Exception {
+        UUID order = sales.confirmedOrder(o, sales.line(o.variant(), "2", null));
+        UUID delivery = id(sales.createDelivery(o, order, null), 201);
+        int version = sales.<Integer>read(o, "/sales-orders/" + order, "$.version");
+
+        try (Connection posting = TestDatabase.connectAs("erp_app", TestDatabase.APP_PASSWORD)) {
+            posting.setAutoCommit(false);
+            try (PreparedStatement lock = posting.prepareStatement(
+                    "SELECT set_config('app.company_id', ?, true), (SELECT id FROM sales.deliveries WHERE id = ?::uuid FOR UPDATE)")) {
+                lock.setString(1, o.inv().company().toString());
+                lock.setString(2, delivery.toString());
+                lock.execute();
+            }
+            long started = System.nanoTime();
+            MockHttpServletResponse cancelled = sales.action(
+                            o, o.session(), "/sales-orders/" + order + "/cancel", version, null, null)
+                    .andReturn()
+                    .getResponse();
+            Duration took = Duration.ofNanos(System.nanoTime() - started);
+            posting.rollback();
+
+            assertThat(cancelled.getStatus()).isEqualTo(409);
+            assertThat((String) JsonPath.read(cancelled.getContentAsString(), "$.code"))
+                    .isEqualTo("RESOURCE_BUSY");
+            assertThat(took).as("no wait for the lock timeout").isLessThan(Duration.ofSeconds(3));
+        }
+        // Without a posting in flight the order is cancelled together with its draft delivery.
+        expect(sales.action(o, o.session(), "/sales-orders/" + order + "/cancel", version, null, null), 200);
+        assertThat(sales.<String>read(o, "/deliveries/" + delivery, "$.status")).isEqualTo("CANCELLED");
     }
 
     @Test

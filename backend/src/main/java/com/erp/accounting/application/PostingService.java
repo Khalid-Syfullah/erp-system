@@ -148,21 +148,6 @@ class PostingService {
                     newOpenItem,
                     item);
         }
-
-        Line negated() {
-            return new Line(
-                    accountId,
-                    base.negate(),
-                    currencyCode,
-                    amountCurrency.negate(),
-                    partnerId,
-                    branchId,
-                    departmentId,
-                    taxCodeId,
-                    description,
-                    newOpenItem,
-                    openItemId);
-        }
     }
 
     /** The document an entry books, and the event it was booked from (ACC-5). */

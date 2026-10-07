@@ -1,5 +1,6 @@
 package com.erp.auth;
 
+import static com.erp.db.admin.Tables.AUDIT_LOG;
 import static com.erp.db.auth.Tables.SESSIONS;
 import static com.erp.support.AuthTestSupport.unsafe;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -10,6 +11,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.erp.auth.domain.SecureTokens;
+import com.erp.platform.context.CurrentContext;
+import com.erp.platform.context.RequestContext;
 import com.erp.support.AuthTestSupport;
 import com.erp.support.AuthTestSupport.TestUser;
 import com.erp.support.IntegrationTest;
@@ -18,12 +21,14 @@ import jakarta.servlet.http.Cookie;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /** Session expiry, rotation, concurrency cap and revocation (SECURITY.md §3.3). */
 class SessionLifecycleIntegrationTest extends IntegrationTest {
@@ -36,6 +41,9 @@ class SessionLifecycleIntegrationTest extends IntegrationTest {
 
     @Autowired
     DSLContext dsl;
+
+    @Autowired
+    TransactionTemplate tx;
 
     @Test
     void idleSessionsExpire() throws Exception {
@@ -154,6 +162,8 @@ class SessionLifecycleIntegrationTest extends IntegrationTest {
                 .andExpect(status().isNoContent());
         mvc.perform(get("/api/v1/me").cookie(first)).andExpect(status().isUnauthorized());
         mvc.perform(get("/api/v1/me").cookie(second)).andExpect(status().isOk());
+        // Signing a session out remotely is a logout (AUD-1): audited with the session and its user.
+        assertThat(auditActionsOf(UUID.fromString(ids.getFirst()))).containsExactly("SESSION_REVOKE");
     }
 
     @Test
@@ -194,5 +204,14 @@ class SessionLifecycleIntegrationTest extends IntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"password\":\"" + user.password() + "\"}"))
                 .andExpect(status().isTooManyRequests());
+    }
+
+    private List<String> auditActionsOf(UUID entityId) {
+        return CurrentContext.callWith(
+                RequestContext.forRequest("test-" + UUID.randomUUID()).withGlobalAccess(),
+                () -> tx.execute(status -> dsl.select(AUDIT_LOG.ACTION)
+                        .from(AUDIT_LOG)
+                        .where(AUDIT_LOG.ENTITY_ID.eq(entityId))
+                        .fetch(AUDIT_LOG.ACTION)));
     }
 }

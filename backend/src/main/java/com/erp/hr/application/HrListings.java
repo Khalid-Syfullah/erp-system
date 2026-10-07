@@ -29,6 +29,8 @@ public final class HrListings {
     public static final ListDefinition EMPLOYEES = ListDefinition.builder("hr.employees")
             .sortable("employeeNumber", "lastName", "hireDate", "createdAt")
             .defaultSort(SortOrder.asc("employeeNumber"))
+            // Batch lookups of referenced records by ID (the web app's names in list cells).
+            .filter("id", ValueType.UUID, IN)
             .filter("employeeNumber", ValueType.STRING, EQ, IN, LIKE)
             .enumFilter("status", Set.of("ONBOARDING", "ACTIVE", "ON_LEAVE", "TERMINATED"), EQ, IN)
             .filter("hireDate", ValueType.DATE, EQ, GTE, LTE)

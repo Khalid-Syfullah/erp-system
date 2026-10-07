@@ -22,6 +22,8 @@ buildscript {
         classpath(libs.codegen.flyway.postgresql)
         classpath(libs.codegen.postgresql)
         classpath(libs.codegen.testcontainers.postgresql)
+        // Security override (see gradle/libs.versions.toml): Flyway's Jackson on the build classpath.
+        classpath(platform(libs.jackson.bom))
     }
     configurations.classpath { resolutionStrategy.activateDependencyLocking() }
 }
@@ -49,6 +51,7 @@ dependencies {
     implementation(platform(libs.spring.modulith.bom))
     // Security overrides (see gradle/libs.versions.toml): newer patch releases than the Boot BOM manages.
     implementation(platform(libs.jackson.bom))
+    implementation(platform(libs.jackson2.bom))
     constraints {
         listOf("tomcat-embed-core", "tomcat-embed-el", "tomcat-embed-websocket").forEach { artifact ->
             implementation("org.apache.tomcat.embed:$artifact") {

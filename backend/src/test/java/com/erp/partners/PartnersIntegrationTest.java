@@ -109,6 +109,8 @@ class PartnersIntegrationTest extends IntegrationTest {
                 .andExpect(jsonPath("$.data[*].code").value(contains("GLOBEX")));
         mvc.perform(get(p.path("/partners")).cookie(p.session()).param("filter[taxRegistrationNo]", "DE123"))
                 .andExpect(jsonPath("$.data[*].code").value(contains("GLOBEX")));
+        mvc.perform(get(p.path("/partners")).cookie(p.session()).param("filter[id][in]", partner + "," + p.supplier()))
+                .andExpect(jsonPath("$.data[*].code").value(contains("ACME", "GLOBEX")));
         mvc.perform(get(p.path("/suppliers")).cookie(p.session()))
                 .andExpect(jsonPath("$.data[*].code").value(contains("ACME")))
                 .andExpect(jsonPath("$.data[0].profile.currencyCode").value("USD"));

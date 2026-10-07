@@ -151,10 +151,6 @@ async function readProblem(response: Response): Promise<Problem> {
   return syntheticProblem(response.status, response.status >= 500 ? 'INTERNAL_ERROR' : 'HTTP_' + response.status);
 }
 
-export interface RawResponse {
-  response: Response;
-}
-
 /** Sends a request and returns the raw response after error handling (for files). */
 export async function send(method: string, url: string, options: RequestOptions = {}, retried = false): Promise<Response> {
   const upper = method.toUpperCase();
@@ -296,13 +292,25 @@ export function companyApi(companyId: string): CompanyApi {
   } as CompanyApi;
 }
 
+/** The file name of a Content-Disposition header: RFC 5987 `filename*` (percent-encoded) or plain `filename`. */
+function fileName(encoded: string | undefined, plain: string | undefined): string | undefined {
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded);
+    } catch {
+      return undefined;
+    }
+  }
+  return plain;
+}
+
 /** Downloads a file response (exports, payslips, bank files) and hands it to the browser. */
 export async function download(url: string, fallbackName: string, options: RequestOptions = {}): Promise<void> {
   const response = await send('GET', url, options);
   const blob = await response.blob();
   const disposition = response.headers.get('Content-Disposition') ?? '';
   const match = /filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i.exec(disposition);
-  const name = match ? decodeURIComponent(match[1] ?? match[2] ?? fallbackName) : fallbackName;
+  const name = fileName(match?.[1], match?.[2]) ?? fallbackName;
   const href = URL.createObjectURL(blob);
   try {
     const link = document.createElement('a');
