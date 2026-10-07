@@ -6,6 +6,24 @@ A production-grade ERP for medium-sized organizations. It is built as a **modula
 
 > **New here?** The [user manual](docs/USER_MANUAL.md) explains step by step how to run the ERP: the demo company with screenshots of every business process, setting up your own company, the Docker images, and troubleshooting.
 
+## সহজ বাংলায়: কোন অংশ কী করে
+
+বাঁ পাশের মেনুর প্রতিটি অংশের কাজ এক নজরে:
+
+- **ড্যাশবোর্ড:** আপনার কাজের মূল হিসাব এক জায়গায় দেখায়। যেমন কত টাকা পাওনা, কত দিতে হবে, মজুতের মূল্য আর জনবল।
+- **প্রতিষ্ঠান:** কোম্পানি, শাখা, বিভাগ, গ্রাহক ও সরবরাহকারী, কর কোড আর পরিশোধের শর্ত এখানে ঠিক করা হয়।
+- **মানবসম্পদ:** কর্মচারীর তথ্য, পদ, ছুটির আবেদন ও অনুমোদন, সরকারি ছুটি আর উপস্থিতি।
+- **স্ব-সেবা:** কর্মচারী নিজেই নিজের প্রোফাইল, ছুটি, উপস্থিতি আর বেতন স্লিপ দেখেন।
+- **মজুত:** পণ্য, গুদাম, কোথায় কত মাল আছে, মাল আনা-নেওয়া, গণনা আর মজুতের মূল্য।
+- **ক্রয়:** চাহিদাপত্র থেকে ক্রয় আদেশ, মাল গ্রহণ, ফেরত আর সরবরাহকারীর বিল।
+- **বিক্রয়:** মূল্য তালিকা, কোটেশন, বিক্রয় আদেশ, ডেলিভারি, ফেরত আর গ্রাহকের ইনভয়েস।
+- **হিসাবরক্ষণ:** হিসাব তালিকা, জাবেদা দাখিলা, পাওনা ও দেনা, ব্যাংক, পেমেন্ট, ব্যয় আর হিসাবকাল বন্ধ করা। কেনাবেচার হিসাব এখানে নিজে থেকেই লেখা হয়।
+- **বেতন ব্যবস্থাপনা:** মাসিক বেতন হিসাব করা, অন্য একজনের অনুমোদন, হিসাবে তোলা আর পরিশোধ। বেতন স্লিপ ও ব্যাংক ফাইলও এখান থেকে।
+- **প্রতিবেদন:** বিক্রয়, ক্রয়, মজুত, হিসাব ও বেতনের তৈরি প্রতিবেদন, যেমন রেওয়ামিল, আয় বিবরণী আর উদ্বৃত্তপত্র। CSV, Excel ও PDF-এ নামানো যায়।
+- **প্রশাসন:** ব্যবহারকারী, তাঁদের ভূমিকা ও অনুমতি, আর কে কখন কী বদলেছে তার নিরীক্ষা লগ।
+
+যিনি কাগজ তৈরি করেন, তিনি নিজে তা অনুমোদন করতে পারেন না। আর প্রত্যেকে কেবল নিজের অনুমতির অংশটুকুই দেখেন। বিস্তারিত ধাপগুলো [ব্যবহার নির্দেশিকায়](docs/USER_MANUAL.md) আছে।
+
 ## Screenshots
 
 **বাংলা (default language).** The web application opens in Bangla. English is one click away.
@@ -167,9 +185,78 @@ All configuration comes from environment variables. Secrets have no defaults, an
 ## Repository layout
 
 ```
-backend/   Spring Boot modular monolith (com.erp.platform kernel, com.erp.<module>)
-frontend/  React SPA (Vite; see frontend/README.md)
-infra/     db/bootstrap (roles), compose (local stack), docker (image)
-docs/      specification
-.github/   CI
+erp-claude/
+├── README.md                     this file
+├── CLAUDE.md                     rules for AI coding agents
+├── .env.example                  local configuration template (copy to .env)
+├── .github/workflows/ci.yml      CI: backend and frontend builds with image scans, API contract, dependency and secret scans
+│
+├── docs/                         the specification (normative) and the guides
+│   ├── PRODUCT_SPEC.md           scope, business rules, document lifecycles, posting matrix
+│   ├── ARCHITECTURE.md           modules, dependencies, transactions, events, deployment
+│   ├── DATABASE.md               schemas, RLS, invariants, locking
+│   ├── API.md                    REST conventions and the endpoint catalogue
+│   ├── SECURITY.md               authentication, permissions, data protection, audit
+│   ├── DEVELOPMENT_PLAN.md       phases 1–12 and the Definition of Done
+│   ├── DECISIONS.md              ADRs and open questions
+│   ├── LOCALIZATION.md           Bangla and English: preference, formatting, glossary
+│   ├── USER_MANUAL.md            how to run and use it, step by step
+│   └── manual/images/            the manual's screenshots (English, and Bangla bn-*.png)
+│
+├── infra/
+│   ├── compose/                  local stack: PostgreSQL, SeaweedFS (S3), Mailpit
+│   ├── db/bootstrap/             database roles (owner, migrator, app, reporting, support)
+│   └── docker/                   backend and frontend images, nginx config of the SPA
+│
+├── backend/                      Java 25 · Spring Boot 4.1 · Spring Modulith · jOOQ
+│   ├── build.gradle.kts          build, jOOQ codegen, Spotless, JaCoCo (with *.lockfile)
+│   └── src/
+│       ├── main/java/com/erp/
+│       │   ├── ErpApplication.java
+│       │   ├── platform/         shared kernel: security, web, json, money, tx, audit,
+│       │   │                     idempotency, numbering, files, crypto, events, jooq
+│       │   ├── auth/             users, sign-in, MFA, sessions, roles and permissions
+│       │   ├── org/              companies, branches, departments, tax codes, payment terms,
+│       │   │                     exchange rates, document numbering
+│       │   ├── partners/         customers and suppliers
+│       │   ├── hr/               employees, leave, attendance, self-service
+│       │   ├── inventory/        products, warehouses, the stock engine
+│       │   ├── procurement/      requisitions, purchase orders, receipts, supplier bills
+│       │   ├── sales/            price lists, quotations, orders, deliveries, invoices
+│       │   ├── accounting/       chart of accounts, journals, posting engine, AR/AP, payments
+│       │   ├── payroll/          components, structures, runs, payslips, bank file
+│       │   ├── reporting/        report catalogue, dashboards, exports
+│       │   └── admin/            audit log storage and queries
+│       │       └── each module:  api/ events/ (public) · application/ domain/
+│       │                         persistence/ web/ (internal)
+│       ├── main/resources/
+│       │   ├── application*.yml  configuration and profiles (local, prod, migrate, …)
+│       │   └── db/migration/     Flyway migrations V<timestamp>__<module>__<desc>.sql
+│       └── test/java/com/erp/    unit and integration tests per module (Testcontainers),
+│                                 ArchitectureTests, ModularityTests, support/ (fixtures)
+│
+└── frontend/                     React 19 · TypeScript · Vite · TanStack Router/Query
+    ├── package.json              scripts: dev, build, test, lint, typecheck, api:*, demo:code
+    ├── index.html
+    ├── security-headers.mjs      the SPA's security headers and CSP
+    ├── scripts/                  API type generation, route generation, demo TOTP codes
+    ├── src/
+    │   ├── main.tsx · app/       entry point, router, query client
+    │   ├── api/                  generated API types and the typed client
+    │   ├── auth/                 session, company context, permissions, language switch
+    │   ├── i18n/                 message catalogues: bn.ts (Bangla, default), en.ts (English)
+    │   ├── layout/               application shell: navigation, header, user menu
+    │   ├── components/           ui/ (shadcn), data/, form/, overlay/, document/, …
+    │   ├── modules/              screens: dashboard, org, hr, inventory, procurement,
+    │   │                         sales, accounting, payroll, reports, admin, account
+    │   ├── routes/               file-based routes (/c/$companyId/... per company)
+    │   ├── lib/                  number, amount and date formatting, enums
+    │   └── styles/ · index.css   Tailwind and theme
+    ├── e2e/                      Playwright: business flows, smoke + accessibility,
+    │   │                         localization, tablet, security headers
+    │   ├── support/              seed data, fixtures, helpers
+    │   └── manual/               screenshot capture for docs/USER_MANUAL.md
+    └── tests/                    unit test of the security headers
 ```
+
+Not committed (generated or local): `.env`, `backend/build/` (including the generated jOOQ classes), `frontend/node_modules/`, `frontend/dist/` and `frontend/src/routeTree.gen.ts`. `frontend/src/api/schema.d.ts` is committed and regenerated from the backend's OpenAPI document with `npm run api:generate`.
