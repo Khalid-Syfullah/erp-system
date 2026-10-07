@@ -1,4 +1,4 @@
-# খাতা ERP
+# ERP
 
 ***Every taka, every item and every employee, accounted for in one place, in Bangla or English.***
 
