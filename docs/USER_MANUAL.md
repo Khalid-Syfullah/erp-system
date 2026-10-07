@@ -167,7 +167,7 @@ Alice and Bob are deliberately different people: the system enforces **segregati
 
 Open <http://localhost:5173>.
 
-> **Language.** The ERP opens in **Bangla** (বাংলা). This manual and its screenshots use English: choose **English** in the **বাংলা | English** switch at the top right of the sign-in page. The choice is remembered in the browser and, after you sign in, in your profile, so it follows you to other devices. You can switch at any time in the page header, the user menu or **My account**. See [LOCALIZATION.md](LOCALIZATION.md).
+> **Language.** The ERP opens in **Bangla** (বাংলা). This manual and its screenshots use English: choose **English** in the **বাংলা | English** switch at the top right of the sign-in page. The choice is remembered in the browser and, after you sign in, in your profile, so it follows you to other devices. You can switch at any time in the page header, the user menu or **My account**. [Step 9](#step-9-the-bangla-interface-বাংলা) shows the Bangla screens.
 
 **1. Enter the e-mail address and password.**
 
@@ -210,6 +210,43 @@ Common screen elements:
 - **Lists** have search, filters, sortable column headers and paging at the bottom. Click a number or name to open the record.
 - **Documents** (orders, receipts, invoices…) show their status as a coloured badge next to the title. The buttons at the top right are the actions allowed in that status and for your roles; less frequent actions are under **More**. **History** shows every change with who made it and when.
 - The server checks every action again. If an action is refused (for example, not enough stock), the message explains why and points to the field concerned.
+
+### Step 9: The Bangla interface (বাংলা)
+
+The ERP opens in Bangla, its default language. Every screen, message and report shown above in English is also available in Bangla. Figures are written with Bengali digits and the Bangladeshi lakh grouping, for example `১,২৩,৪৫৬` or `৳২৫,০০০.০০`. Codes and numbers that identify something stay as they are: document numbers such as `INV-2026-000012`, product codes, account codes, e-mail addresses and phone numbers. The values themselves are identical in both languages. Only the way they are written changes.
+
+**Sign-in page.** Switch with **বাংলা | English** at the top right.
+
+![The sign-in page in Bangla](manual/images/bn-01-sign-in.png)
+
+**Dashboard and navigation.**
+
+![The dashboard in Bangla](manual/images/bn-02-dashboard.png)
+
+<table>
+  <tr>
+    <td width="50%"><img src="manual/images/bn-03-sales-orders.png" alt="Sales orders (বিক্রয় আদেশ) with Bangla statuses and dates"><br><sub>Sales orders (বিক্রয় আদেশ): statuses, dates and amounts in Bangla. Order numbers are unchanged.</sub></td>
+    <td width="50%"><img src="manual/images/bn-04-invoice.png" alt="A posted invoice (ইনভয়েস) in Bangla"><br><sub>A posted invoice (ইনভয়েস) with its totals (সর্বমোট)</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="manual/images/bn-05-purchase-order.png" alt="A purchase order (ক্রয় আদেশ) in Bangla"><br><sub>A purchase order (ক্রয় আদেশ), received and billed</sub></td>
+    <td width="50%"><img src="manual/images/bn-06-stock.png" alt="Stock on hand (মজুত) in Bangla"><br><sub>Stock on hand (মজুত)</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="manual/images/bn-09-trial-balance.png" alt="The trial balance (রেওয়ামিল) in Bangla"><br><sub>The trial balance (রেওয়ামিল). Account names are shown as they were entered.</sub></td>
+    <td width="50%"><img src="manual/images/bn-10-payroll-run.png" alt="A paid payroll run (বেতন প্রক্রিয়া) in Bangla"><br><sub>A paid payroll run (বেতন প্রক্রিয়া): gross pay, deductions and net pay</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="manual/images/bn-07-validation.png" alt="Form validation in Bangla"><br><sub>Form checks and error messages are in Bangla (আবশ্যক = required)</sub></td>
+    <td width="50%"><img src="manual/images/bn-11-my-leave.png" alt="Self-service leave (আমার ছুটি) in Bangla"><br><sub>Erin's self-service leave page (আমার ছুটি)</sub></td>
+  </tr>
+</table>
+
+**Your language follows you.** The choice is saved in your profile: after you sign in on another computer, the ERP opens in your language there too. Change it at any time in the header, in the user menu or under **My account → Profile → Language**:
+
+![Choosing the language in My account](manual/images/bn-08-account-language.png)
+
+Data that people enter, such as names of customers, products, accounts and leave types, is shown exactly as it was typed. A company that works in Bangla simply enters these names in Bangla. Searching works with Bangla text too. See [LOCALIZATION.md](LOCALIZATION.md) for the details and the glossary of terms.
 
 ---
 
@@ -555,7 +592,7 @@ cd frontend
 npm run docs:screenshots
 ```
 
-It walks through the processes above in a real browser and replaces the images in `docs/manual/images/`. Each run adds new demo documents.
+It walks through the processes above in a real browser and replaces the images in `docs/manual/images/`. Each run adds new demo documents. The Bangla screenshots (`bn-*.png`, Step 9) show existing documents and can be refreshed alone with `npm run docs:screenshots -- -g "Bangla interface"`.
 
 ### C.4 Stop, restart and reset
 

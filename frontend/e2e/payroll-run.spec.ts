@@ -22,7 +22,7 @@ test('payroll run', async ({ browser, seed, companyPath }) => {
   const officer = await (await browser.newContext({ storageState: storage('alice') })).newPage();
   await officer.goto(companyPath('/payroll/runs'));
   await officer.getByRole('button', { name: 'New payroll run' }).click();
-  await pick(officer, 'Period', period!.startDate, new RegExp(period!.startDate));
+  await pick(officer, 'Period', period!.startDate, / – /);
   await officer.getByRole('dialog').getByRole('button', { name: 'Save' }).click();
   await expect(officer).toHaveURL(/\/payroll\/runs\//);
   await expectStatus(officer, 'Draft');

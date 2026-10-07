@@ -2,6 +2,12 @@
 
 The web application is bilingual. **Bangla (bn-BD) is the primary and default language**. English (en) is the secondary language and the fallback for any message that has no Bangla translation. Only the presentation is localized. The API, the database, identifiers, enum values and every calculation stay the same in both languages (ADR-043).
 
+| Bangla | English |
+|---|---|
+| ![Invoice in Bangla](manual/images/bn-04-invoice.png) | ![Invoice in English](manual/images/27-invoice-posted.png) |
+
+More Bangla screens are in the user manual ([Step 9](USER_MANUAL.md#step-9-the-bangla-interface-বাংলা)).
+
 ## 1. Configuration
 
 | Setting | Value | Where |
@@ -43,7 +49,7 @@ src/lib/format.ts       numbers, money, dates, quantities and decimal input in t
 | Texts the server words in English: report names, descriptions, parameters and columns; dashboard and widget titles; role names; permission descriptions (`serverText`) | Document numbers, SKUs, codes, IDs, account numbers, IBANs, phone numbers, email addresses, URLs |
 | Numbers, amounts, quantities, percentages, dates, times and month names | Data the user enters: partner, product, employee and account names, notes, chart-of-accounts names |
 
-Master data (account names, leave type names, product names) is shown as the company entered it. A company that keeps its books in Bangla enters Bangla names.
+Master data (account names, leave type names, product names) is shown as the company entered it. A company that keeps its books in Bangla enters Bangla names. Descriptions that the server writes into posted records (for example a journal entry's "Reversal of JE-2026-000004: …") are part of the immutable ledger and stay in English. A fixed status text such as a purchase order's "Fully received and billed" is translated through `serverText`.
 
 ## 4. Language preference
 

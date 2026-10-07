@@ -261,7 +261,7 @@ test('payroll run', async ({ browser, seed, companyPath }) => {
   const officer = await as(browser, 'alice');
   await officer.goto(companyPath('/payroll/runs'));
   await officer.getByRole('button', { name: 'New payroll run' }).click();
-  await pick(officer, 'Period', period!.startDate, new RegExp(period!.startDate));
+  await pick(officer, 'Period', period!.startDate, / – /);
   await shot(officer, '50-payroll-run-new');
   await officer.getByRole('dialog').getByRole('button', { name: 'Save' }).click();
   await expect(officer).toHaveURL(/\/payroll\/runs\//);
@@ -328,4 +328,63 @@ test('administration', async ({ browser, companyPath }) => {
   await companyAdmin.goto(companyPath('/admin/audit'));
   await expect(companyAdmin.getByRole('table')).toBeVisible();
   await shot(companyAdmin, '74-audit-log');
+});
+
+/** The same demo screens in Bangla, the default language (docs/LOCALIZATION.md). Creates no documents. */
+test('Bangla interface', async ({ browser, seed, companyPath }) => {
+  const bangla = async (user: 'alice' | 'bob' | 'erin') => {
+    const page = await as(browser, user);
+    await page.addInitScript(() => localStorage.setItem('erp.language', 'bn'));
+    return page;
+  };
+  const year = new Date().getFullYear();
+  const alice = apiAs('alice', seed);
+  const invoice = (await alice.get('/invoices', { 'filter[status]': 'POSTED', limit: 1 })).data[0];
+  const order = (await alice.get('/purchase-orders', { limit: 1 })).data[0];
+  const run = (await apiAs('bob', seed).get('/payroll-runs', { 'filter[status]': 'PAID', limit: 1 })).data[0];
+
+  const signIn = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
+  await signIn.goto('/login');
+  await expect(signIn.getByRole('heading', { name: 'সাইন ইন' })).toBeVisible();
+  await shot(signIn, 'bn-01-sign-in');
+
+  const page = await bangla('alice');
+  await page.goto(companyPath(''));
+  await expect(page.getByRole('navigation', { name: 'প্রধান নেভিগেশন' })).toBeVisible();
+  await shot(page, 'bn-02-dashboard');
+  await page.goto(companyPath('/sales/orders'));
+  await expect(page.getByRole('table')).toBeVisible();
+  await shot(page, 'bn-03-sales-orders');
+  await page.goto(companyPath(`/sales/invoices/${invoice.id}`));
+  await expect(page.getByText('সর্বমোট', { exact: true })).toBeVisible();
+  await shot(page, 'bn-04-invoice');
+  await page.goto(companyPath(`/procurement/orders/${order.id}`));
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  await shot(page, 'bn-05-purchase-order');
+  await page.goto(companyPath('/inventory/stock'));
+  await expect(page.getByRole('table')).toBeVisible();
+  await shot(page, 'bn-06-stock');
+  await page.goto(companyPath('/org/partners'));
+  await page.getByRole('button', { name: 'নতুন পক্ষ' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'তৈরি করুন' }).click();
+  await expect(page.getByRole('dialog').getByText('আবশ্যক').first()).toBeVisible();
+  await shot(page, 'bn-07-validation');
+  await page.goto('/account');
+  await expect(page.getByRole('tabpanel').getByRole('group', { name: 'ভাষা' })).toBeVisible();
+  await shot(page, 'bn-08-account-language');
+
+  const approver = await bangla('bob');
+  await approver.goto(companyPath('/reports/trial-balance'));
+  await approver.getByLabel('প্রথম তারিখ (অন্তর্ভুক্ত)').fill(`${year}-01-01`);
+  await approver.getByRole('button', { name: 'প্রতিবেদন চালান' }).click();
+  await expect(approver.getByRole('table', { name: 'রেওয়ামিল' })).toContainText('1010');
+  await shot(approver, 'bn-09-trial-balance');
+  await approver.goto(companyPath(`/payroll/runs/${run.id}`));
+  await expect(approver.getByText('নিট বেতন', { exact: true }).first()).toBeVisible();
+  await shot(approver, 'bn-10-payroll-run');
+
+  const employee = await bangla('erin');
+  await employee.goto(companyPath('/me/leave'));
+  await expect(employee.getByRole('heading', { level: 1 })).toBeVisible();
+  await shot(employee, 'bn-11-my-leave');
 });

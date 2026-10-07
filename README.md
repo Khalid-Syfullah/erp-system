@@ -8,6 +8,21 @@ A production-grade ERP for medium-sized organizations. It is built as a **modula
 
 ## Screenshots
 
+**বাংলা (default language).** The web application opens in Bangla. English is one click away.
+
+<table>
+  <tr>
+    <td width="50%"><a href="docs/USER_MANUAL.md#step-9-the-bangla-interface-বাংলা"><img src="docs/manual/images/bn-02-dashboard.png" alt="The dashboard in Bangla"></a><br><sub>ড্যাশবোর্ড: the dashboard in Bangla, with Bengali digits</sub></td>
+    <td width="50%"><a href="docs/USER_MANUAL.md#step-9-the-bangla-interface-বাংলা"><img src="docs/manual/images/bn-04-invoice.png" alt="A posted invoice in Bangla"></a><br><sub>ইনভয়েস: a posted invoice. Document numbers and codes are unchanged.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="docs/USER_MANUAL.md#step-9-the-bangla-interface-বাংলা"><img src="docs/manual/images/bn-09-trial-balance.png" alt="The trial balance in Bangla"></a><br><sub>রেওয়ামিল: the trial balance</sub></td>
+    <td width="50%"><a href="docs/USER_MANUAL.md#step-9-the-bangla-interface-বাংলা"><img src="docs/manual/images/bn-10-payroll-run.png" alt="A payroll run in Bangla"></a><br><sub>বেতন প্রক্রিয়া: a paid payroll run</sub></td>
+  </tr>
+</table>
+
+**English.**
+
 ![The dashboard of the demo company: key figures for the signed-in user's roles, and the role-aware navigation](docs/manual/images/03-dashboard.png)
 
 <table>

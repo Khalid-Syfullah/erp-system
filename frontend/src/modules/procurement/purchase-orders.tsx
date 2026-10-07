@@ -22,7 +22,7 @@ import { CheckboxField, DateField, EntityField, FieldGrid, Form, TextareaField }
 import { mergePatch, zf } from '@/components/form/schema';
 import { FormProblem, useSubmit } from '@/components/form/use-submit';
 import { Button } from '@/components/ui/button';
-import { t } from '@/i18n';
+import { serverText, t } from '@/i18n';
 import { enums } from '@/lib/enums';
 import { todayIso } from '@/lib/format';
 import { pricedLineColumns, pricedLineSchema, pricedLinesBody, pricedLineValues, PricedLinesEditor } from '../shared/priced-lines';
@@ -274,7 +274,7 @@ export function PurchaseOrderPage() {
               o.approvedAt ? { label: t('enums.APPROVED'), value: <DateTimeText value={o.approvedAt} /> } : null,
               o.rejectionReason ? { label: t('doc.rejectReason'), value: o.rejectionReason } : null,
               o.cancelReason ? { label: t('enums.CANCELLED'), value: o.cancelReason } : null,
-              o.closeReason ? { label: t('enums.CLOSED'), value: o.closeReason } : null,
+              o.closeReason ? { label: t('enums.CLOSED'), value: serverText(o.closeReason) } : null,
               o.notes ? { label: t('doc.notes'), value: o.notes, wide: true } : null,
             ]}
           />

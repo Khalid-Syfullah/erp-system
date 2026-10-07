@@ -51,7 +51,8 @@ export function DateTimeText({ value }: { value: string | null | undefined }) {
 
 export function Text({ value }: { value: string | number | null | undefined }) {
   if (value === null || value === undefined || value === '') return dash;
-  return <>{value}</>;
+  // A number (a count) in the language's digits; strings, such as identifiers, as they are.
+  return <>{typeof value === 'number' ? formatDecimal(value) : value}</>;
 }
 
 export function Code({ children }: { children: string | null | undefined }) {

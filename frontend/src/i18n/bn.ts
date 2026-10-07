@@ -1776,6 +1776,8 @@ export const bn = {
     'Financial controller': 'আর্থিক নিয়ন্ত্রক',
     'First date of the comparison period': 'তুলনামূলক সময়কালের প্রথম তারিখ',
     'First date, inclusive': 'প্রথম তারিখ (অন্তর্ভুক্ত)',
+    // A purchase order closed by its last receipt or bill (PurchaseOrderService).
+    'Fully received and billed': 'সম্পূর্ণ গৃহীত ও বিলকৃত',
     'First document date, inclusive': 'নথির প্রথম তারিখ (অন্তর্ভুক্ত)',
     'GL account': 'সাধারণ খতিয়ানের হিসাব',
     'GRNI': 'গৃহীত কিন্তু অবিলকৃত',

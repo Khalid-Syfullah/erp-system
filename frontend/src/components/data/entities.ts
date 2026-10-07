@@ -4,7 +4,7 @@
 import { api, type CompanyApi, type Query, type Schemas } from '@/api/client';
 import type { Filters, Page } from '@/api/list';
 import { serverText } from '@/i18n';
-import { formatDecimal } from '@/lib/format';
+import { formatDate, formatDecimal } from '@/lib/format';
 
 export interface EntitySource<T = unknown> {
   key: string;
@@ -21,6 +21,8 @@ export interface EntitySource<T = unknown> {
   id(item: T): string;
   label(item: T): string;
   description?(item: T): string | undefined;
+  /** Further text a picker's search matches without showing it (e.g. a period's ISO dates). */
+  keywords?(item: T): string;
   /** Whether the record can be picked for new documents (inactive records stay displayable). */
   selectable?(item: T): boolean;
   defaultFilters?: Filters;
@@ -303,7 +305,8 @@ export const entities = {
     permission: 'payroll.run.read',
     list: (c, query, signal) => c.get('/payroll-periods', null, { query, signal }),
     id: (p) => p.id!,
-    label: (p) => `${p.startDate} – ${p.endDate}`,
+    label: (p) => `${formatDate(p.startDate)} – ${formatDate(p.endDate)}`,
+    keywords: (p) => `${p.startDate} ${p.endDate}`,
     description: (p) => p.status,
     selectable: (p) => p.status !== 'CLOSED',
   }),

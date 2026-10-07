@@ -203,7 +203,7 @@ export function EntityPicker<T>({
       .filter((item) => (filter ? filter(item) : true))
       .filter((item) => {
         if (!term) return true;
-        return searchable(`${source.label(item)} ${source.description?.(item) ?? ''}`).includes(term);
+        return searchable(`${source.label(item)} ${source.description?.(item) ?? ''} ${source.keywords?.(item) ?? ''}`).includes(term);
       })
       .slice(0, 100);
   }, [source, all.items, remote.data, search, filter]);

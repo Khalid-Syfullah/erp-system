@@ -26,7 +26,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { enumLabel, t } from '@/i18n';
 import { enumOptions, enums } from '@/lib/enums';
-import { todayIso } from '@/lib/format';
+import { formatDecimal, todayIso } from '@/lib/format';
+
+/** Days paid of the period's days ("৩১ / ৩১"), in the language's digits. */
+const daysPaid = (p: { daysPaid?: number; daysInPeriod?: number }) => `${formatDecimal(p.daysPaid)} / ${formatDecimal(p.daysInPeriod)}`;
 
 type Run = Schemas['Run'];
 type Period = Schemas['PayrollPeriod'];
@@ -399,7 +402,7 @@ function PayslipsTable({ runId, status, currency }: { runId: string; status?: st
           ),
         },
         { id: 'department', header: t('common.department'), hideBelow: 'md', cell: (p) => <EntityName source={entities.department} id={p.departmentId} /> },
-        { id: 'days', header: t('pay.daysPaid'), align: 'right', hideBelow: 'sm', cell: (p) => `${p.daysPaid ?? ''} / ${p.daysInPeriod ?? ''}` },
+        { id: 'days', header: t('pay.daysPaid'), align: 'right', hideBelow: 'sm', cell: (p) => daysPaid(p) },
         { id: 'gross', header: t('pay.gross'), align: 'right', cell: (p) => <Money value={p.grossAmount} currency={currency} showCurrency={false} /> },
         { id: 'deductions', header: t('pay.deductions'), align: 'right', hideBelow: 'md', cell: (p) => <Money value={p.deductionAmount} currency={currency} showCurrency={false} /> },
         { id: 'net', header: t('pay.net'), align: 'right', cell: (p) => <Money value={p.netAmount} currency={currency} showCurrency={false} /> },
@@ -464,7 +467,7 @@ export function PayslipView({ detail, pdfUrl }: { detail: Schemas['Detail']; pdf
           items={[
             { label: t('pay.position'), value: <Text value={p.positionTitle} /> },
             { label: t('common.department'), value: <EntityName source={entities.department} id={p.departmentId} /> },
-            { label: t('pay.daysPaid'), value: `${p.daysPaid ?? ''} / ${p.daysInPeriod ?? ''}` },
+            { label: t('pay.daysPaid'), value: daysPaid(p) },
             { label: t('pay.baseAmount'), value: <Money value={p.baseAmount} currency={p.currencyCode} /> },
             { label: t('pay.gross'), value: <Money value={p.grossAmount} currency={p.currencyCode} /> },
             { label: t('pay.taxableGross'), value: <Money value={p.taxableGross} currency={p.currencyCode} /> },
@@ -534,7 +537,7 @@ export function MyPayslipsPage() {
                   <TableRow key={p.id}>
                     <TableCell>
                       <Link to="/c/$companyId/me/payslips/$payslipId" params={{ companyId, payslipId: p.id! }} className="font-medium text-primary hover:underline">
-                        {t('pay.payslip')} · {t('pay.daysPaid')} {p.daysPaid}/{p.daysInPeriod}
+                        {t('pay.payslip')} · {t('pay.daysPaid')} {daysPaid(p)}
                       </Link>
                     </TableCell>
                     <TableCell className="text-right"><Money value={p.grossAmount} currency={p.currencyCode} /></TableCell>
