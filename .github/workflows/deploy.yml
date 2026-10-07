@@ -1,0 +1,139 @@
+# Continuous deployment to the production server (https://erp.khalidsyfullah.com).
+#
+# Runs only after the "CI" workflow has succeeded for a push to main (never for pull requests or
+# forks). Builds the backend jar and both images on an arm64 runner (the server is Graviton),
+# pushes them to ECR tagged with the commit SHA, then tells the server to pull and restart via
+# AWS Systems Manager (no SSH, no inbound ports). AWS access uses GitHub OIDC; there are no
+# long-lived keys. The server side lives in /opt/erp/deploy-update.sh.
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-southeast-2
+  AWS_ROLE_ARN: arn:aws:iam::312605974340:role/erp-github-deploy
+  EC2_INSTANCE_ID: i-06b375f9360b2a8b4
+  SITE_URL: https://erp.khalidsyfullah.com
+
+jobs:
+  deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - name: Check out the commit that passed CI
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SHA }}
+          persist-credentials: false
+
+      - name: Skip if a newer commit is already on main
+        id: fresh
+        if: github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest=$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)
+          if [ "$latest" != "$SHA" ]; then
+            echo "main moved on ($latest); its own CI run will deploy it. Skipping $SHA."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Java
+        if: steps.fresh.outputs.skip != 'true'
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        if: steps.fresh.outputs.skip != 'true'
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Build the backend jar (jOOQ codegen uses Testcontainers)
+        if: steps.fresh.outputs.skip != 'true'
+        working-directory: backend
+        run: ./gradlew --no-daemon bootJar -x test
+
+      - name: Configure AWS credentials (OIDC)
+        if: steps.fresh.outputs.skip != 'true'
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR
+        if: steps.fresh.outputs.skip != 'true'
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+
+      - name: Build and push images (skipped when the tag already exists)
+        if: steps.fresh.outputs.skip != 'true'
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+          build() { # <repo> <dockerfile>
+            if aws ecr describe-images --repository-name "$1" --image-ids imageTag="$SHA" >/dev/null 2>&1; then
+              echo "$1:$SHA already in ECR"
+            else
+              docker build -f "$2" -t "$REGISTRY/$1:$SHA" .
+              docker push "$REGISTRY/$1:$SHA"
+            fi
+          }
+          build erp-backend infra/docker/backend.Dockerfile
+          build erp-web infra/docker/frontend.Dockerfile
+
+      - name: Deploy on the server via SSM
+        if: steps.fresh.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "bad SHA"; exit 1; }
+          cmd=$(aws ssm send-command \
+            --instance-ids "$EC2_INSTANCE_ID" \
+            --document-name AWS-RunShellScript \
+            --comment "deploy $SHA" \
+            --timeout-seconds 900 \
+            --parameters "commands=[\"/opt/erp/deploy-update.sh $SHA\"]" \
+            --query Command.CommandId --output text)
+          echo "SSM command $cmd"
+          for _ in $(seq 1 120); do
+            sleep 10
+            status=$(aws ssm get-command-invocation --command-id "$cmd" --instance-id "$EC2_INSTANCE_ID" \
+              --query Status --output text 2>/dev/null || echo Pending)
+            case "$status" in
+              Pending|InProgress|Delayed) ;;
+              *) break ;;
+            esac
+          done
+          aws ssm get-command-invocation --command-id "$cmd" --instance-id "$EC2_INSTANCE_ID" \
+            --query StandardOutputContent --output text || true
+          aws ssm get-command-invocation --command-id "$cmd" --instance-id "$EC2_INSTANCE_ID" \
+            --query StandardErrorContent --output text || true
+          echo "Final status: $status"
+          [ "$status" = "Success" ]
+
+      - name: Smoke test
+        if: steps.fresh.outputs.skip != 'true'
+        run: curl -fsS --retry 10 --retry-delay 5 --retry-all-errors "$SITE_URL/api/v1/auth/csrf" -o /dev/null
