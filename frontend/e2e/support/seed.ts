@@ -12,7 +12,7 @@ const STATE_FILE = resolve(import.meta.dirname, '../.state/seed.json');
 
 export interface SeedState {
   admin: Credentials;
-  users: Record<'alice' | 'bob' | 'erin', Credentials>;
+  users: Record<'alice' | 'bob' | 'erin' | 'demo', Credentials>;
   companyId: string;
   ids: Record<string, string>;
 }
@@ -23,8 +23,12 @@ const ADMIN: Credentials = {
   password: process.env.ERP_ADMIN_PASSWORD ?? 'Correct-Horse-Battery-77',
 };
 
-/** Roles per demo user (SECURITY.md §4.3). Alice does the work, Bob approves (segregation of duties). */
-const USERS = {
+/**
+ * Roles per demo user (SECURITY.md §4.3). Alice does the work, Bob approves (segregation of duties).
+ * Demo is a showcase login: every role of the company plus system administration. Like anyone, it
+ * cannot approve what it prepared itself, so the seed leaves an order of Alice's for it to approve.
+ */
+const USERS: Record<'alice' | 'bob' | 'erin' | 'demo', { email: string; name: string; roles: readonly string[] | 'ALL'; systemAdmin?: boolean }> = {
   alice: {
     email: 'alice@erp.local',
     name: 'Alice Operations',
@@ -36,7 +40,8 @@ const USERS = {
     roles: ['PROCUREMENT_MANAGER', 'SALES_MANAGER', 'FINANCIAL_CONTROLLER', 'PAYROLL_APPROVER', 'AUDITOR'],
   },
   erin: { email: 'erin@erp.local', name: 'Erin Employee', roles: ['EMPLOYEE'] },
-} as const;
+  demo: { email: 'demo@erp.local', name: 'Demo Manager', roles: 'ALL', systemAdmin: true },
+};
 
 export function readSeedState(): SeedState {
   return JSON.parse(readFileSync(STATE_FILE, 'utf8')) as SeedState;
@@ -68,7 +73,9 @@ async function ensureUser(admin: Session, key: keyof typeof USERS, previous?: Cr
   const spec = USERS[key];
   const existing = (await admin.get('/api/v1/admin/users', { 'filter[email]': spec.email })).data?.[0];
   if (!existing) {
-    await admin.post('/api/v1/admin/users', { email: spec.email, displayName: spec.name });
+    await admin.post('/api/v1/admin/users', { email: spec.email, displayName: spec.name, isSystemAdmin: spec.systemAdmin ?? false });
+  } else if (spec.systemAdmin && !existing.isSystemAdmin) {
+    await admin.patch(`/api/v1/admin/users/${existing.id}`, { isSystemAdmin: true }, { ifMatch: existing.version });
   }
   if (!existing || existing.status === 'INVITED') {
     const token = await mailToken(spec.email, '/accept-invitation');
@@ -82,7 +89,8 @@ async function assignRoles(admin: Session, companyId: string, key: keyof typeof 
   const user = (await admin.get('/api/v1/admin/users', { 'filter[email]': spec.email })).data[0];
   const roles = (await admin.get('/api/v1/admin/roles')).data as { id: string; code: string }[];
   const current = (await admin.get(`/api/v1/admin/users/${user.id}/role-assignments`)).data as { roleCode: string; companyId: string }[];
-  for (const code of spec.roles) {
+  const codes = spec.roles === 'ALL' ? roles.map((r) => r.code) : spec.roles;
+  for (const code of codes) {
     if (current.some((a) => a.roleCode === code && a.companyId === companyId)) continue;
     const role = roles.find((r) => r.code === code)!;
     await admin.post(`/api/v1/admin/users/${user.id}/role-assignments`, { companyId, roleId: role.id });
@@ -127,7 +135,7 @@ export async function seed(): Promise<SeedState> {
   const users = { ...(previous.users ?? {}) } as SeedState['users'];
   const userIds: Record<string, string> = {};
   const sessions: Partial<Record<keyof typeof USERS, Session>> = {};
-  for (const key of ['alice', 'bob', 'erin'] as const) {
+  for (const key of ['alice', 'bob', 'erin', 'demo'] as const) {
     users[key] = await ensureUser(admin, key, users[key]);
     userIds[key] = await assignRoles(admin, company.id, key);
     const signed = await login(users[key]);
@@ -303,6 +311,17 @@ export async function seed(): Promise<SeedState> {
     if (existing.length === 0) {
       await alice.post(`/employees/${employeeId}/compensations`, { payScheduleId: schedule.id, salaryStructureId: ids.structure, baseAmount: base, effectiveFrom: hireDate });
     }
+  }
+
+  // A purchase order Alice prepared, waiting for approval: the showcase login approves it (it
+  // cannot approve its own documents).
+  const pending = await alice.get('/purchase-orders', { 'filter[status]': 'PENDING_APPROVAL', limit: 1 });
+  if (!pending.data?.length) {
+    const order = await alice.post('/purchase-orders', {
+      supplierId: ids.partnerACME, warehouseId: ids.warehouse,
+      lines: [{ variantId: ids.variantGADGET, quantity: '5', uomId: ids.uomEA, unitPrice: '18' }],
+    });
+    await alice.post(`/purchase-orders/${order.id}/submit`, undefined, { ifMatch: order.version });
   }
 
   save(state);

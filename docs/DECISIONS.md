@@ -986,6 +986,25 @@ The ERP is for organizations in Bangladesh. People there work in Bangla, while t
 - Master data (chart of accounts, leave types, products) is shown as entered. The seeded STANDARD_SME chart and the demo company are in English.
 - Text stored before this change is not rewritten to NFC. Searches for such text still match unless it contains a decomposed sequence, which is rare in practice because keyboards and IMEs produce NFC.
 
+### ADR-044 — Running the images locally in Safari: no HTTPS upgrade and no Secure cookies over plain HTTP (Accepted, Phase 12)
+
+**Context**
+
+The web image sends the SPA's production headers (SECURITY.md §10.1), including the CSP directive `upgrade-insecure-requests`. A local run of the image (`docker compose --profile app`, http://localhost:8088) has no TLS. Chrome and Firefox treat `localhost` as a secure origin and skip the upgrade. Safari applies it: the HTML loaded, then every script and stylesheet was requested over HTTPS from the plain-HTTP port, nginx answered `400`, and the page stayed empty.
+
+**Decision**
+
+- nginx sets the directive through a `map` on the request's host name. It is left out for exactly `localhost` and `127.0.0.1`, and kept for every other host name.
+- **Cookies.** With the page fixed, sign-in still failed in Safari with `403 CSRF_INVALID`. The production profile marks the session, MFA and CSRF cookies `Secure` (with the `__Host-` prefix), and Safari stores no Secure cookies for `http://localhost`. The Docker Compose stack (`infra/compose/docker-compose.yml`) only serves plain HTTP on 127.0.0.1. Its `app` service therefore sets `ERP_SECURITY_SECURECOOKIES=false`, as the `local` profile does. The production default (`erp.security.secure-cookies: true`) is unchanged, and so is every deployment behind TLS.
+
+**Consequences**
+
+- The local Docker run works in Safari: the page renders, and sign-in, including two-step verification, succeeds.
+- The Compose file must not be used to serve the application over a network: it binds every port to 127.0.0.1 and now also sends non-Secure cookies.
+- Deployments are addressed by their own host name, so they receive the unchanged policy. A deployment reached at `localhost` has no TLS for the directive to enforce anyway.
+- `Strict-Transport-Security` is unchanged; browsers ignore it over plain HTTP.
+- `frontend/tests/security-headers.test.ts` checks that nginx sends the exact §10.1 policy to every other host and that the exemption covers only these two names. The image's end-to-end header check expects the shorter policy when it runs against localhost.
+
 ---
 
 ## 2. Requirement conflicts identified and how they were resolved

@@ -12,6 +12,16 @@ A production-grade ERP for medium-sized organizations: organization, HR and payr
 
 **New here? Start with the [user manual](docs/USER_MANUAL.md).** It explains how to run the ERP and walks through the demo company with screenshots of every business process. It also covers setting up your own company, the Docker images and troubleshooting.
 
+## 🔑 Demo login (ডেমো লগইন)
+
+> **One login with full access** (সম্পূর্ণ অ্যাক্সেস) to show every feature:
+>
+> | E-mail | Password | Two-step verification code |
+> |---|---|---|
+> | **`demo@erp.local`** | **`Blue-Ocean-Lantern-2026`** | `npm --prefix frontend run demo:code demo` |
+>
+> Open <http://localhost:5173> (development mode) or <http://localhost:8088> (Docker mode). The code changes every 30 seconds; run the command again for a new one. The other demo users and the steps to start the project are under [How to run](#how-to-run-কীভাবে-চালাবেন).
+
 ## Key features (মূল বৈশিষ্ট্য)
 
 - ![Bangla first](https://img.shields.io/badge/Bangla_first-006A4E?style=flat-square) **Bangla and English interface** (বাংলা ও ইংরেজি): Bangla is the default and English is one click away. Amounts show as **৳২৫,০০০.০০** with Bengali digits, and your choice follows you to every device.
@@ -250,13 +260,19 @@ These users exist after you load the demo company (step 6 below). Open **<http:/
 | **Bob** | `bob@erp.local` | `Blue-Ocean-Lantern-2026` | yes | Approves what Alice prepares: purchase orders, sales overrides, payroll runs; finance and audit |
 | **Erin** | `erin@erp.local` | `Blue-Ocean-Lantern-2026` | no | An employee: self-service only (her leave, attendance, payslips) |
 | **Admin** | `admin@erp.local` | `Correct-Horse-Battery-77` | yes | System administrator: users, roles and companies, no company data |
+| **Demo** ⭐ | `demo@erp.local` | `Blue-Ocean-Lantern-2026` | yes | **Showcase login with full access** (সম্পূর্ণ অ্যাক্সেস): every role in Demo Trading plus system administration |
 
 **Two-step verification code** (দ্বি-ধাপ যাচাই কোড): Alice, Bob and Admin also need a 6-digit code after the password. In the demo you don't need a phone; print the current code in a terminal and type it within 30 seconds:
 
 ```bash
 cd frontend
-npm run demo:code alice      # or: bob, admin
+npm run demo:code alice      # or: bob, demo, admin
+
+# or, from the project folder:
+npm --prefix frontend run demo:code demo
 ```
+
+**To show everything with one login, use Demo** (`npm run demo:code demo` for its code). It sees every menu section and can do every action, with one exception that no user can bypass: **nobody approves their own work** (segregation of duties). The seed therefore leaves a purchase order prepared by Alice *Pending approval*, so Demo can show the approval. To show self-service (my leave, attendance, payslips), sign in as Erin.
 
 ### Run the project step by step (ধাপে ধাপে চালানো)
 
@@ -431,3 +447,7 @@ All configuration comes from environment variables. Secrets have no defaults, an
 | `ERP_MFA_ISSUER` | Issuer shown in authenticator apps (default `ERP`) |
 | `ERP_DB_POOL_SIZE`, `ERP_DB_STATEMENT_TIMEOUT`, `ERP_DB_LOCK_TIMEOUT` | Tuning (defaults 10, 30s, 5s) |
 | `ERP_HTTP_PORT`, `ERP_MANAGEMENT_PORT` | Ports (defaults 8080, 8081) |
+
+---
+
+© 2026 **Khalid Syfullah** · <khalidsyfullah@gmail.com> · All rights reserved.

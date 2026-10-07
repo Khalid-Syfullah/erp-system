@@ -8,8 +8,11 @@ test.skip(!process.env.ERP_SPA_PRODUCTION, 'runs against a production build (ERP
 test('HTML and assets carry the security headers', async ({ request }) => {
   const html = await request.get('/c/any/route');
   expect(html.status()).toBe(200);
+  // The web image leaves `upgrade-insecure-requests` out for localhost only (no TLS there, ADR-044).
+  const local = !!process.env.ERP_SPA_IMAGE && ['localhost', '127.0.0.1'].includes(new URL(html.url()).hostname);
   for (const [name, value] of Object.entries(securityHeaders)) {
-    expect(html.headers()[name.toLowerCase()], name).toBe(value);
+    const expected = local && name === 'Content-Security-Policy' ? value.replace('; upgrade-insecure-requests', '') : value;
+    expect(html.headers()[name.toLowerCase()], name).toBe(expected);
   }
   const body = await html.text();
   expect(body).not.toMatch(/<script(?![^>]*\bsrc=)[^>]*>/); // no inline scripts

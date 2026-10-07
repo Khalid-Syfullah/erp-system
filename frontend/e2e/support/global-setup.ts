@@ -33,7 +33,8 @@ export default async function globalSetup() {
           path: '/',
           expires: -1,
           httpOnly: c.name !== 'XSRF-TOKEN',
-          secure: false,
+          // The production session cookie is `__Host-` prefixed, which browsers accept only when Secure.
+          secure: c.name.startsWith('__Host-') || c.name.startsWith('__Secure-'),
           sameSite: 'Lax' as const,
         })),
         origins: [{ origin: SPA_ORIGIN, localStorage: [{ name: 'erp.language', value: 'en' }] }],

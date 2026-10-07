@@ -391,6 +391,8 @@ Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
 Cross-Origin-Opener-Policy: same-origin
 ```
 
+The web image (`infra/docker/nginx/spa.conf`) leaves out `upgrade-insecure-requests` when the site is addressed as `localhost` or `127.0.0.1` (ADR-044). A local run has no TLS, and Safari applies the directive even to localhost, so it requested every asset over HTTPS from the plain-HTTP port and showed an empty page. Every other host name receives the policy above unchanged. For the same reason, the local Docker Compose stack, which serves plain HTTP on 127.0.0.1 only, runs the API with `ERP_SECURITY_SECURECOOKIES=false`. Deployments behind TLS keep Secure, `__Host-` cookies.
+
 `style-src 'unsafe-inline'` is accepted because Radix UI positions elements with inline style attributes. Scripts remain strictly `'self'`, and there are no inline scripts. This should be revisited in Phase 12, using nonces or hashes if feasible.
 
 Hashed static assets are cached as immutable. `index.html` is served with `no-cache`.

@@ -160,6 +160,7 @@ The sign-in details, including the two-step secrets, are saved in `frontend/e2e/
 | **Bob** | `bob@erp.local` | `Blue-Ocean-Lantern-2026` | Approves what Alice prepares: purchase orders, sales overrides, payroll runs; finance and audit |
 | **Erin** | `erin@erp.local` | `Blue-Ocean-Lantern-2026` | An employee: self-service only (her leave, attendance, payslips) |
 | **Admin** | `admin@erp.local` | `Correct-Horse-Battery-77` | System administrator: users, roles and companies. No access to company data |
+| **Demo** | `demo@erp.local` | `Blue-Ocean-Lantern-2026` | Showcase login: every role in Demo Trading plus system administration. It cannot approve its own documents; the seed leaves a purchase order of Alice's waiting for its approval |
 
 Alice and Bob are deliberately different people: the system enforces **segregation of duties**, so the person who prepares a purchase order or a payroll run cannot approve it.
 
@@ -177,7 +178,7 @@ Open <http://localhost:5173>.
 
 ```bash
 cd frontend
-npm run demo:code alice      # or: bob, admin
+npm run demo:code alice      # or: bob, demo, admin
 ```
 
 It prints, for example, `alice@erp.local: 223746  (valid for 23 more seconds)`. Type the code and choose **Verify**.
