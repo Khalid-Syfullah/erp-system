@@ -93,6 +93,8 @@ Related: [ARCHITECTURE.md](ARCHITECTURE.md) · [API.md](API.md) · [DATABASE.md]
   - any user holding a permission flagged `is_sensitive` (§4.2), which includes `*.manage_bank` and all `payroll.*`
 
   A user who has such a role but has not enrolled is forced into enrollment after the password step: the session is restricted (`403 MFA_ENROLLMENT_REQUIRED`) except for `GET /me`, the TOTP setup and confirm endpoints and logout. Users for whom MFA is mandatory cannot disable it (`409 MFA_MANDATORY`); an administrator can reset it (`POST /admin/users/{id}/reset-mfa`).
+
+  **Exemption (ADR-045).** Accounts listed in `erp.auth.mfa.exempt-emails` (`ERP_MFA_EXEMPT_EMAILS`, compared case-insensitively, empty by default) are never mandatory MFA users: they are not forced into enrollment and may remove an authenticator they enrolled. An exempted account that has enrolled still gets the second step at login. The list is meant only for demo logins on a showcase deployment; the application logs a warning at startup whenever it is not empty.
 - Login flow: password OK → `401 MFA_REQUIRED` + challenge (an HttpOnly cookie valid for 5 minutes, allowing 5 attempts) → `POST /auth/login/mfa` → the session is established.
 
 ### 3.6 API tokens (integrations)

@@ -5,6 +5,8 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import java.time.Duration;
+import java.util.Locale;
+import java.util.Set;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 import org.springframework.validation.annotation.Validated;
@@ -58,9 +60,25 @@ public record AuthProperties(
             @Min(1) @Max(365) @DefaultValue("90") int apiTokenDefaultDays,
             @Min(1) @Max(365) @DefaultValue("365") int apiTokenMaxDays) {}
 
+    /**
+     * @param exemptEmails accounts that are never forced to enroll a second factor, whatever their
+     *     roles (ADR-045: demo logins on a showcase deployment). Empty in normal operation.
+     */
     public record Mfa(
             @NotNull @DefaultValue("ERP") String issuer,
-            @NotNull @DefaultValue("5m") Duration challengeTtl) {}
+            @NotNull @DefaultValue("5m") Duration challengeTtl,
+            @NotNull @DefaultValue Set<String> exemptEmails) {
+
+        /** Whether mandatory MFA is waived for this e-mail address (case-insensitive). */
+        public boolean exempts(String email) {
+            String normalized = normalize(email);
+            return !normalized.isEmpty() && exemptEmails.stream().map(Mfa::normalize).anyMatch(normalized::equals);
+        }
+
+        private static String normalize(String email) {
+            return email == null ? "" : email.strip().toLowerCase(Locale.ROOT);
+        }
+    }
 
     /** One-shot creation of the first system administrator (profile {@code bootstrap-admin}). */
     public record Bootstrap(String adminEmail, String adminPassword, String adminDisplayName) {}
