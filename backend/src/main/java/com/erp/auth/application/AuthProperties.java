@@ -72,7 +72,8 @@ public record AuthProperties(
         /** Whether mandatory MFA is waived for this e-mail address (case-insensitive). */
         public boolean exempts(String email) {
             String normalized = normalize(email);
-            return !normalized.isEmpty() && exemptEmails.stream().map(Mfa::normalize).anyMatch(normalized::equals);
+            return !normalized.isEmpty()
+                    && exemptEmails.stream().map(Mfa::normalize).anyMatch(normalized::equals);
         }
 
         private static String normalize(String email) {
