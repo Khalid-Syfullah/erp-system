@@ -445,6 +445,7 @@ All configuration comes from environment variables. Secrets have no defaults, an
 | `ERP_JOBS_ENABLED` | `true` on the worker instance(s): audit partitions, security-record purges, payroll calculation and payslip PDFs, report exports and their expiry (default `false`; `true` in `local`) |
 | `ERP_BOOTSTRAP_ADMIN_EMAIL`, `ERP_BOOTSTRAP_ADMIN_PASSWORD`, `ERP_BOOTSTRAP_ADMIN_DISPLAY_NAME` | Only for the one-shot `bootstrap-admin` profile |
 | `ERP_MFA_ISSUER` | Issuer shown in authenticator apps (default `ERP`) |
+| `ERP_MFA_EXEMPT_EMAILS` | Comma-separated accounts that are never forced to enroll two-step verification, whatever their roles (default: none). Only for demo logins on a showcase server ([ADR-045](docs/DECISIONS.md)); a listed account is protected by its password alone |
 | `ERP_DB_POOL_SIZE`, `ERP_DB_STATEMENT_TIMEOUT`, `ERP_DB_LOCK_TIMEOUT` | Tuning (defaults 10, 30s, 5s) |
 | `ERP_HTTP_PORT`, `ERP_MANAGEMENT_PORT` | Ports (defaults 8080, 8081) |
 

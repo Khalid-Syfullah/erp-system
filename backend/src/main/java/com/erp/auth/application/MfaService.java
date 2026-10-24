@@ -20,16 +20,21 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.OptionalLong;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
  * TOTP multi-factor authentication (SECURITY.md §3.5): enrollment with confirmation, verification
  * with replay protection, ten single-use recovery codes, and the "MFA required" rule (system admins,
- * roles flagged {@code requires_mfa} and roles holding sensitive permissions).
+ * roles flagged {@code requires_mfa} and roles holding sensitive permissions), minus the accounts
+ * exempted by configuration ({@code erp.auth.mfa.exempt-emails}, ADR-045).
  */
 @Service
 public class MfaService {
+
+    private static final Logger log = LoggerFactory.getLogger(MfaService.class);
 
     static final int RECOVERY_CODES = 10;
 
@@ -62,12 +67,19 @@ public class MfaService {
         this.audit = audit;
         this.properties = properties;
         this.clock = clock;
+        if (!properties.mfa().exemptEmails().isEmpty()) {
+            log.warn(
+                    "Mandatory MFA is waived for {} account(s) (erp.auth.mfa.exempt-emails): {}",
+                    properties.mfa().exemptEmails().size(),
+                    properties.mfa().exemptEmails());
+        }
     }
 
     /** Whether the user must have a second factor before using the application. */
     @Transactional(readOnly = true)
     public boolean isRequired(AuthUser user) {
         return user.userType() == UserType.HUMAN
+                && !properties.mfa().exempts(user.email())
                 && (user.systemAdmin()
                         || assignments.requiresMfa(user.id(), LocalDate.ofInstant(clock.instant(), ZoneOffset.UTC)));
     }

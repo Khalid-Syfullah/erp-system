@@ -195,6 +195,8 @@ erp:
     mfa:
       issuer: ${ERP_MFA_ISSUER:ERP}
       challenge-ttl: 5m
+      # Comma-separated accounts never forced to enroll MFA (ADR-045, demo logins only). Keep empty.
+      exempt-emails: ${ERP_MFA_EXEMPT_EMAILS:}
     bootstrap:
       admin-email: ${ERP_BOOTSTRAP_ADMIN_EMAIL:}
       admin-password: ${ERP_BOOTSTRAP_ADMIN_PASSWORD:}

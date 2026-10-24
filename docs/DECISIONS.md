@@ -1005,6 +1005,25 @@ The web image sends the SPA's production headers (SECURITY.md §10.1), including
 - `Strict-Transport-Security` is unchanged; browsers ignore it over plain HTTP.
 - `frontend/tests/security-headers.test.ts` checks that nginx sends the exact §10.1 policy to every other host and that the exemption covers only these two names. The image's end-to-end header check expects the shorter policy when it runs against localhost.
 
+### ADR-045 — Exempting listed demo accounts from mandatory MFA (Accepted, after Phase 12)
+
+**Context**
+
+SECURITY.md §3.5 makes MFA mandatory for system admins and for anyone holding a role flagged `requires_mfa` or a sensitive permission. The demo company's showcase logins (Alice, Bob, Admin and Demo) all fall under that rule. On a public showcase server, the owner wants to sign in as them with the password only, during a demonstration, without enrolling an authenticator for each one first. No setting covered this: the rule was fixed in code.
+
+**Decision**
+
+- A new setting, `erp.auth.mfa.exempt-emails` (`ERP_MFA_EXEMPT_EMAILS`), lists the accounts that are never mandatory MFA users. Addresses are compared case-insensitively. The default is empty, which keeps §3.5 unchanged.
+- `MfaService.isRequired` returns `false` for a listed account. Every consequence follows from that one rule: no forced enrollment after the password step, `GET /me` reports `mfaRequired: false`, and removing an enrolled authenticator is allowed.
+- An exempted account that has enrolled still gets the second step at login. The exemption waives the obligation, not an authenticator the user chose to keep.
+- The application logs a warning at startup that names the exempted accounts whenever the list is not empty.
+
+**Consequences**
+
+- A listed account is protected by its password alone, including a system administrator. The list is for demo accounts on a showcase deployment, and their passwords must not be public (the README's demo passwords are). Production deployments leave it empty.
+- Roles, permissions and the sign-out of sessions on a new MFA obligation (§3.5, `AssignmentService`, `RoleService`) are unchanged. A listed user may be signed out when given such a role and then simply signs in again.
+- `MfaExemptionIntegrationTest` checks that listed accounts, a system administrator and a holder of an MFA role, get a full session, and that an unlisted administrator is still forced into enrollment.
+
 ---
 
 ## 2. Requirement conflicts identified and how they were resolved

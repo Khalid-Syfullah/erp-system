@@ -86,7 +86,12 @@ public class AuthTestSupport {
 
     public TestUser user(boolean systemAdmin) {
         String unique = UUID.randomUUID().toString().substring(0, 8);
-        String email = "user-" + unique + "@example.test";
+        return user("user-" + unique + "@example.test", systemAdmin);
+    }
+
+    /** A user with the given (unique) e-mail address. */
+    public TestUser user(String email, boolean systemAdmin) {
+        String unique = UUID.randomUUID().toString().substring(0, 8);
         String displayName = "Test User";
         String password = DEFAULT_PASSWORD_PREFIX + unique;
         UUID id = dsl.insertInto(USERS)
